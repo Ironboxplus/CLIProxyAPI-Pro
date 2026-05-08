@@ -93,7 +93,7 @@ jobs:
         if: steps.compare_versions.outputs.should_build == 'true'
         uses: docker/build-push-action@v6
         with:
-          context: ./CPA-Plus-Core
+          context: ./cliproxyapi-pro-core
           platforms: linux/amd64,linux/arm64
           build-args: |
             CLIPROXY_VERSION=${{ steps.get_latest_tag.outputs.latest_tag }}
