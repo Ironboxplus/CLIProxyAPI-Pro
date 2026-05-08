@@ -4,7 +4,7 @@
  */
 
 import { useQuotaStore } from '@/stores';
-import { sqliteQuotaCache } from './sqliteQuotaCache';
+import { sqliteQuotaCache, type QuotaCacheEntry } from './sqliteQuotaCache';
 
 type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi';
 
@@ -162,11 +162,21 @@ class QuotaPersistenceMiddleware {
     this.isPreloading = true;
 
     try {
-      const providers: QuotaProviderType[] = ['antigravity', 'claude', 'codex', 'gemini-cli', 'kimi'];
+      const cachedEntries = await sqliteQuotaCache.getAll();
+      if (cachedEntries.length === 0) return;
 
-      for (const provider of providers) {
-        await this.preloadProvider(provider);
-      }
+      const entriesByProvider = new Map<QuotaProviderType, QuotaCacheEntry[]>();
+      cachedEntries.forEach((entry) => {
+        if (!this.isQuotaProvider(entry.provider)) return;
+        const provider = entry.provider;
+        const entries = entriesByProvider.get(provider) ?? [];
+        entries.push(entry);
+        entriesByProvider.set(provider, entries);
+      });
+
+      entriesByProvider.forEach((entries, provider) => {
+        this.preloadProvider(provider, entries);
+      });
     } catch (err) {
       console.error('QuotaPersistenceMiddleware: Failed to preload cache:', err);
     } finally {
@@ -177,37 +187,26 @@ class QuotaPersistenceMiddleware {
   /**
    * Preload single provider from SQLite quota cache
    */
-  private async preloadProvider(provider: QuotaProviderType) {
-    try {
-      // Get all cached file names for this provider
-      const fileNames = await sqliteQuotaCache.getFileNamesByProvider(provider);
-      if (fileNames.length === 0) return;
+  private preloadProvider(provider: QuotaProviderType, cachedEntries: QuotaCacheEntry[]) {
+    const cached = new Map(cachedEntries.map((entry) => [entry.fileName, entry.data]));
+    if (cached.size === 0) return;
 
-      // Batch get cached data
-      const cached = await sqliteQuotaCache.batchGet(provider, fileNames);
-      if (cached.size === 0) return;
+    const setterName = this.getSetterName(provider) as 'setAntigravityQuota' | 'setClaudeQuota' | 'setCodexQuota' | 'setGeminiCliQuota' | 'setKimiQuota';
+    const storeState = useQuotaStore.getState();
+    const setter = storeState[setterName];
 
-      // Write to store
-      const setterName = this.getSetterName(provider) as 'setAntigravityQuota' | 'setClaudeQuota' | 'setCodexQuota' | 'setGeminiCliQuota' | 'setKimiQuota';
-      const storeState = useQuotaStore.getState();
-      const setter = storeState[setterName];
-
-      if (typeof setter === 'function') {
-        setter((prev: Record<string, any>) => {
-          const next = { ...prev };
-          cached.forEach((data, fileName) => {
-            // Only fill empty slots, don't overwrite existing data
-            if (!next[fileName]) {
-              next[fileName] = data;
-            }
-          });
-          return next;
+    if (typeof setter === 'function') {
+      setter((prev: Record<string, any>) => {
+        const next = { ...prev };
+        cached.forEach((data, fileName) => {
+          if (!next[fileName]) {
+            next[fileName] = data;
+          }
         });
+        return next;
+      });
 
-        console.log(`QuotaPersistenceMiddleware: Preloaded ${cached.size} entries for ${provider}`);
-      }
-    } catch (err) {
-      console.error(`QuotaPersistenceMiddleware: Failed to preload ${provider}:`, err);
+      console.log(`QuotaPersistenceMiddleware: Preloaded ${cached.size} entries for ${provider}`);
     }
   }
 
@@ -220,6 +219,10 @@ class QuotaPersistenceMiddleware {
   ): Record<string, QuotaStatusState> | null {
     const mapName = this.getQuotaMapName(provider);
     return state[mapName] || null;
+  }
+
+  private isQuotaProvider(provider: string): provider is QuotaProviderType {
+    return ['antigravity', 'claude', 'codex', 'gemini-cli', 'kimi'].includes(provider);
   }
 
   /**

@@ -183,6 +183,9 @@ const SUPPORTED_INSPECTION_PROVIDER_TYPES = ['antigravity', 'claude', 'codex', '
 type SupportedInspectionProviderType = (typeof SUPPORTED_INSPECTION_PROVIDER_TYPES)[number];
 const ALL_INSPECTION_PROVIDER_TYPE = 'all';
 const SUPPORTED_INSPECTION_PROVIDER_SET = new Set<string>(SUPPORTED_INSPECTION_PROVIDER_TYPES);
+const ACCOUNT_ERROR_STATUS_CODES = new Set([400, 401, 403, 404]);
+const isAccountErrorStatus = (statusCode: number | null | undefined): statusCode is number =>
+  statusCode !== null && statusCode !== undefined && ACCOUNT_ERROR_STATUS_CODES.has(statusCode);
 const QUOTA_BODY_PATTERNS = ['quota exhausted', 'limit reached', 'payment_required'];
 const FIVE_HOUR_WINDOW_SECONDS = 18000;
 const WEEK_WINDOW_SECONDS = 604800;
@@ -652,18 +655,15 @@ const resolveLegacyProbeAction = (
   threshold: number
 ): AccountInspectionDecision => {
   const overThreshold = usedPercent !== null && usedPercent >= threshold;
-  if (statusCode === 401) {
+  if (isAccountErrorStatus(statusCode)) {
     return {
-      action: 'delete',
-      actionReason: '接口返回 401，建议删除失效账号',
-      usedPercent,
-      isQuota: false,
-    };
-  }
-  if (statusCode === 403) {
-    return {
-      action: account.disabled ? 'keep' : 'disable',
-      actionReason: account.disabled ? '接口返回 403，但账号已禁用' : '接口返回 403，建议禁用账号',
+      action: statusCode === 401 ? 'delete' : account.disabled ? 'keep' : 'disable',
+      actionReason:
+        statusCode === 401
+          ? '接口返回 401，建议删除失效账号'
+          : account.disabled
+            ? `接口返回 ${statusCode}，但账号已禁用`
+            : `接口返回 ${statusCode}，建议禁用账号`,
       usedPercent,
       isQuota: false,
     };
@@ -716,19 +716,15 @@ const resolveWindowAwareProbeAction = (
   const weeklyOverThreshold = weeklyUsedPercent >= threshold;
   const fiveHourOverThreshold = fiveHourUsedPercent !== null && fiveHourUsedPercent >= threshold;
 
-  if (statusCode === 401) {
+  if (isAccountErrorStatus(statusCode)) {
     return {
-      action: 'delete',
-      actionReason: '接口返回 401，建议删除失效账号',
-      usedPercent: weeklyUsedPercent,
-      isQuota: false,
-    };
-  }
-
-  if (statusCode === 403) {
-    return {
-      action: account.disabled ? 'keep' : 'disable',
-      actionReason: account.disabled ? '接口返回 403，但账号已禁用' : '接口返回 403，建议禁用账号',
+      action: statusCode === 401 ? 'delete' : account.disabled ? 'keep' : 'disable',
+      actionReason:
+        statusCode === 401
+          ? '接口返回 401，建议删除失效账号'
+          : account.disabled
+            ? `接口返回 ${statusCode}，但账号已禁用`
+            : `接口返回 ${statusCode}，建议禁用账号`,
       usedPercent: weeklyUsedPercent,
       isQuota: false,
     };
@@ -1000,7 +996,7 @@ const inspectAntigravityAccount = async (
     return buildQuotaInspectionResult(account, 'Antigravity', decision, onLog);
   } catch (error) {
     const statusCode = getStatusFromError(error) ?? null;
-    if (statusCode === 401 || statusCode === 403) {
+    if (isAccountErrorStatus(statusCode)) {
       const decision = resolveAuthErrorAction(account, statusCode);
       onLog?.('warning', `${formatAccountInspectionIdentity(account)} -> ${decision.action} (Antigravity · HTTP ${statusCode})`);
       return {
@@ -1043,7 +1039,7 @@ const inspectClaudeAccount = async (
     return buildQuotaInspectionResult(account, 'Claude', decision, onLog);
   } catch (error) {
     const statusCode = getStatusFromError(error) ?? null;
-    if (statusCode === 401 || statusCode === 403) {
+    if (isAccountErrorStatus(statusCode)) {
       const decision = resolveAuthErrorAction(account, statusCode);
       onLog?.('warning', `${formatAccountInspectionIdentity(account)} -> ${decision.action} (Claude · HTTP ${statusCode})`);
       return {
@@ -1086,7 +1082,7 @@ const inspectGeminiCliAccount = async (
     return buildQuotaInspectionResult(account, 'Gemini CLI', decision, onLog);
   } catch (error) {
     const statusCode = getStatusFromError(error) ?? null;
-    if (statusCode === 401 || statusCode === 403) {
+    if (isAccountErrorStatus(statusCode)) {
       const decision = resolveAuthErrorAction(account, statusCode);
       onLog?.('warning', `${formatAccountInspectionIdentity(account)} -> ${decision.action} (Gemini CLI · HTTP ${statusCode})`);
       return {
@@ -1129,7 +1125,7 @@ const inspectKimiAccount = async (
     return buildQuotaInspectionResult(account, 'Kimi', decision, onLog);
   } catch (error) {
     const statusCode = getStatusFromError(error) ?? null;
-    if (statusCode === 401 || statusCode === 403) {
+    if (isAccountErrorStatus(statusCode)) {
       const decision = resolveAuthErrorAction(account, statusCode);
       onLog?.('warning', `${formatAccountInspectionIdentity(account)} -> ${decision.action} (Kimi · HTTP ${statusCode})`);
       return {
@@ -1710,7 +1706,7 @@ export const buildExecutionFailureMessage = (outcome: AccountInspectionExecution
 export const isSuggestedAction = (item: AccountInspectionResultItem) => item.action !== 'keep';
 
 const isAccountErrorAction = (item: AccountInspectionResultItem) =>
-  item.statusCode === 401 || item.statusCode === 403 || (!item.isQuota && item.statusCode !== null && item.statusCode >= 400);
+  isAccountErrorStatus(item.statusCode) || (!item.isQuota && item.statusCode !== null && item.statusCode >= 400);
 
 export const hasAccountInspectionAutoExecutePolicies = (settings: AccountInspectionConfigurableSettings) =>
   settings.autoExecuteQuotaLimitDisable ||

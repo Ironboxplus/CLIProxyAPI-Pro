@@ -1,6 +1,6 @@
 import { apiClient } from '@/services/api/client';
 
-interface QuotaCacheEntry<T = unknown> {
+export interface QuotaCacheEntry<T = unknown> {
   id: string;
   provider: string;
   fileName: string;
@@ -83,6 +83,16 @@ class SqliteQuotaCache {
       await apiClient.delete('/usage/quota-cache');
     } catch (err) {
       console.error('SQLite quota cache clear error:', err);
+    }
+  }
+
+  async getAll<T = unknown>(): Promise<QuotaCacheEntry<T>[]> {
+    try {
+      const response = await apiClient.get<QuotaCacheListResponse<T>>('/usage/quota-cache');
+      return response.items ?? [];
+    } catch (err) {
+      console.error('SQLite quota cache getAll error:', err);
+      return [];
     }
   }
 
