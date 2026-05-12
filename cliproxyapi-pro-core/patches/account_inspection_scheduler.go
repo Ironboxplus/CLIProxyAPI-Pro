@@ -112,6 +112,7 @@ type accountInspectionSummary struct {
 	DisableCount         int `json:"disableCount"`
 	EnableCount          int `json:"enableCount"`
 	KeepCount            int `json:"keepCount"`
+	ErrorCount           int `json:"errorCount"`
 	ExecutedDeleteCount  int `json:"executedDeleteCount"`
 	ExecutedDisableCount int `json:"executedDisableCount"`
 	ExecutedEnableCount  int `json:"executedEnableCount"`
@@ -1576,6 +1577,9 @@ func summarizeAccountInspection(totalFiles int, probeSetCount int, accounts []ac
 			summary.EnableCount++
 		default:
 			summary.KeepCount++
+		}
+		if result.Error != "" {
+			summary.ErrorCount++
 		}
 		if result.Executed {
 			switch result.Action {

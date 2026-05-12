@@ -397,10 +397,13 @@ const createIdleProgressSnapshot = (): AccountInspectionProgressSnapshot => ({
     totalFiles: 0,
     probeSetCount: 0,
     sampledCount: 0,
+    disabledCount: 0,
+    enabledCount: 0,
     deleteCount: 0,
     disableCount: 0,
     enableCount: 0,
     keepCount: 0,
+    errorCount: 0,
   },
   startedAt: Date.now(),
   updatedAt: Date.now(),
@@ -468,10 +471,13 @@ const sameProgressSnapshot = (left: AccountInspectionProgressSnapshot, right: Ac
   left.summary.totalFiles === right.summary.totalFiles &&
   left.summary.probeSetCount === right.summary.probeSetCount &&
   left.summary.sampledCount === right.summary.sampledCount &&
+  left.summary.disabledCount === right.summary.disabledCount &&
+  left.summary.enabledCount === right.summary.enabledCount &&
   left.summary.deleteCount === right.summary.deleteCount &&
   left.summary.disableCount === right.summary.disableCount &&
   left.summary.enableCount === right.summary.enableCount &&
-  left.summary.keepCount === right.summary.keepCount;
+  left.summary.keepCount === right.summary.keepCount &&
+  left.summary.errorCount === right.summary.errorCount;
 
 const sameAutoExecutionCounts = (left: AutoExecutionCounts, right: AutoExecutionCounts) =>
   left.delete === right.delete && left.disable === right.disable && left.enable === right.enable;
@@ -923,7 +929,53 @@ export function AccountInspectionPage() {
     [executeItems, showConfirmation, t]
   );
 
-  const summaryCards = useMemo<SummaryCard[]>(() => {
+  const accountSummaryCards = useMemo<SummaryCard[]>(() => {
+    const summarySource =
+      result?.summary ?? (runStatus === 'running' || runStatus === 'paused' ? progress.summary : null);
+
+    if (!summarySource) {
+      return [
+        { key: 'total', label: t('monitoring.account_inspection_total_accounts'), value: '--' },
+        { key: 'sampled', label: t('monitoring.account_inspection_sampled_accounts'), value: '--' },
+        { key: 'enabled', label: t('monitoring.account_inspection_enabled_current_count'), value: '--' },
+        { key: 'disabled', label: t('monitoring.account_inspection_disabled_current_count'), value: '--' },
+        { key: 'errors', label: t('monitoring.account_inspection_error_count'), value: '--' },
+      ];
+    }
+
+    return [
+      {
+        key: 'total',
+        label: t('monitoring.account_inspection_total_accounts'),
+        value: String(summarySource.probeSetCount),
+      },
+      {
+        key: 'sampled',
+        label: t('monitoring.account_inspection_sampled_accounts'),
+        value: String(summarySource.sampledCount),
+      },
+      {
+        key: 'enabled',
+        label: t('monitoring.account_inspection_enabled_current_count'),
+        value: String(summarySource.enabledCount),
+        tone: summarySource.enabledCount > 0 ? 'good' : 'neutral',
+      },
+      {
+        key: 'disabled',
+        label: t('monitoring.account_inspection_disabled_current_count'),
+        value: String(summarySource.disabledCount),
+        tone: summarySource.disabledCount > 0 ? 'warn' : 'neutral',
+      },
+      {
+        key: 'errors',
+        label: t('monitoring.account_inspection_error_count'),
+        value: String(summarySource.errorCount),
+        tone: summarySource.errorCount > 0 ? 'bad' : 'neutral',
+      },
+    ];
+  }, [progress.summary, result, runStatus, t]);
+
+  const actionSummaryCards = useMemo<SummaryCard[]>(() => {
     const summarySource =
       result?.summary ?? (runStatus === 'running' || runStatus === 'paused' ? progress.summary : null);
     const hasAutoExecutePolicy = hasAccountInspectionAutoExecutePolicies(inspectionSettings);
@@ -939,8 +991,6 @@ export function AccountInspectionPage() {
 
     if (!summarySource) {
       return [
-        { key: 'total', label: t('monitoring.account_inspection_total_accounts'), value: '--' },
-        { key: 'sampled', label: t('monitoring.account_inspection_sampled_accounts'), value: '--' },
         { key: 'delete', label: deleteLabel, value: '--' },
         { key: 'disable', label: disableLabel, value: '--' },
         { key: 'enable', label: enableLabel, value: '--' },
@@ -952,16 +1002,6 @@ export function AccountInspectionPage() {
     const enableCount = hasAutoExecutePolicy ? autoExecutionCounts.enable : summarySource.enableCount;
 
     return [
-      {
-        key: 'total',
-        label: t('monitoring.account_inspection_total_accounts'),
-        value: String(summarySource.probeSetCount),
-      },
-      {
-        key: 'sampled',
-        label: t('monitoring.account_inspection_sampled_accounts'),
-        value: String(summarySource.sampledCount),
-      },
       {
         key: 'delete',
         label: deleteLabel,
@@ -1241,18 +1281,42 @@ export function AccountInspectionPage() {
         </div>
       </Card>
 
-      <section className={styles.summaryGrid}>
-        {summaryCards.map((card) => (
-          <Card
-            key={card.key}
-            className={[styles.summaryCard, summaryToneClass[card.tone ?? 'neutral']]
-              .filter(Boolean)
-              .join(' ')}
-          >
-            <span>{card.label}</span>
-            <strong>{card.value}</strong>
-          </Card>
-        ))}
+      <section className={styles.summarySection}>
+        <div className={styles.summarySectionHeader}>
+          <h2>{t('monitoring.account_inspection_account_summary_title')}</h2>
+        </div>
+        <div className={styles.summaryGrid}>
+          {accountSummaryCards.map((card) => (
+            <Card
+              key={card.key}
+              className={[styles.summaryCard, summaryToneClass[card.tone ?? 'neutral']]
+                .filter(Boolean)
+                .join(' ')}
+            >
+              <span>{card.label}</span>
+              <strong>{card.value}</strong>
+            </Card>
+          ))}
+        </div>
+      </section>
+
+      <section className={styles.summarySection}>
+        <div className={styles.summarySectionHeader}>
+          <h2>{t('monitoring.account_inspection_action_summary_title')}</h2>
+        </div>
+        <div className={styles.summaryGridCompact}>
+          {actionSummaryCards.map((card) => (
+            <Card
+              key={card.key}
+              className={[styles.summaryCard, summaryToneClass[card.tone ?? 'neutral']]
+                .filter(Boolean)
+                .join(' ')}
+            >
+              <span>{card.label}</span>
+              <strong>{card.value}</strong>
+            </Card>
+          ))}
+        </div>
       </section>
 
       <Card className={styles.panel}>

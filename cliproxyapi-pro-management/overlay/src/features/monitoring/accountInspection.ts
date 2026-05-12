@@ -67,6 +67,7 @@ export interface AccountInspectionSummary {
   disableCount: number;
   enableCount: number;
   keepCount: number;
+  errorCount: number;
   usedPercentThreshold: number;
   sampled: boolean;
   plannedActionPreview: string[];
@@ -76,10 +77,13 @@ export interface AccountInspectionProgressSummary {
   totalFiles: number;
   probeSetCount: number;
   sampledCount: number;
+  disabledCount: number;
+  enabledCount: number;
   deleteCount: number;
   disableCount: number;
   enableCount: number;
   keepCount: number;
+  errorCount: number;
 }
 
 export interface AccountInspectionRunResult {
@@ -388,11 +392,13 @@ const summarizeResults = (results: AccountInspectionResultItem[]) => {
   const deleteCount = results.filter((item) => item.action === 'delete').length;
   const disableCount = results.filter((item) => item.action === 'disable').length;
   const enableCount = results.filter((item) => item.action === 'enable').length;
+  const errorCount = results.filter((item) => item.error).length;
   return {
     deleteCount,
     disableCount,
     enableCount,
     keepCount: results.length - deleteCount - disableCount - enableCount,
+    errorCount,
     plannedActionPreview: results
       .filter((item) => item.action !== 'keep')
       .slice(0, 10)
