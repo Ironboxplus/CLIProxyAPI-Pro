@@ -990,24 +990,20 @@
 }
 
 .accountOverviewTable {
-  --account-col-account: 19%;
-  --account-col-total-calls: 7%;
-  --account-col-success-calls: 8%;
-  --account-col-total-tokens: 8%;
-  --account-col-input-tokens: 8%;
-  --account-col-output-tokens: 8%;
-  --account-col-cached-tokens: 8%;
-  --account-col-estimated-cost: 8%;
+  --account-col-account: 24%;
+  --account-col-total-calls: 9%;
+  --account-col-success-calls: 10%;
+  --account-col-success-rate: 9%;
+  --account-col-total-tokens: 12%;
+  --account-col-estimated-cost: 10%;
   --account-col-latest-request: 17%;
   --account-col-action: 9%;
   --account-overview-columns:
     var(--account-col-account)
     var(--account-col-total-calls)
     var(--account-col-success-calls)
+    var(--account-col-success-rate)
     var(--account-col-total-tokens)
-    var(--account-col-input-tokens)
-    var(--account-col-output-tokens)
-    var(--account-col-cached-tokens)
     var(--account-col-estimated-cost)
     var(--account-col-latest-request)
     var(--account-col-action);
@@ -1029,30 +1025,22 @@
 }
 
 .accountOverviewTable col:nth-child(4) {
-  width: var(--account-col-total-tokens);
+  width: var(--account-col-success-rate);
 }
 
 .accountOverviewTable col:nth-child(5) {
-  width: var(--account-col-input-tokens);
+  width: var(--account-col-total-tokens);
 }
 
 .accountOverviewTable col:nth-child(6) {
-  width: var(--account-col-output-tokens);
-}
-
-.accountOverviewTable col:nth-child(7) {
-  width: var(--account-col-cached-tokens);
-}
-
-.accountOverviewTable col:nth-child(8) {
   width: var(--account-col-estimated-cost);
 }
 
-.accountOverviewTable col:nth-child(9) {
+.accountOverviewTable col:nth-child(7) {
   width: var(--account-col-latest-request);
 }
 
-.accountOverviewTable col:nth-child(10) {
+.accountOverviewTable col:nth-child(8) {
   width: var(--account-col-action);
 }
 
@@ -1070,12 +1058,12 @@
   white-space: nowrap;
 }
 
-.accountOverviewTable td:nth-child(9),
-.accountOverviewTable th:nth-child(9) {
+.accountOverviewTable td:nth-child(7),
+.accountOverviewTable th:nth-child(7) {
   white-space: normal;
 }
 
-.accountOverviewTable td:nth-child(9) {
+.accountOverviewTable td:nth-child(7) {
   font-size: 12px;
   line-height: 1.35;
 }

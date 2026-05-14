@@ -168,6 +168,12 @@ const buildAccountSecondaryText = (row: MonitoringAccountRow) => {
   return '';
 };
 
+const getGroupDimensionLabel = (groupBy: MonitoringAccountGroupBy, t: TFunction) => {
+  if (groupBy === 'apiKey') return t('monitoring.api_key_label');
+  if (groupBy === 'model') return t('monitoring.model_label');
+  return t('monitoring.account_label');
+};
+
 const getFocusActionLabel = (row: MonitoringAccountRow, t: TFunction) => {
   if (row.group === 'apiKey') return t('monitoring.focus_api_key');
   if (row.group === 'model') return t('monitoring.focus_model');
@@ -191,24 +197,20 @@ const buildAccountSummaryMetrics = (
     value: <SuccessFailureValue success={row.successCalls} failure={row.failureCalls} />,
   },
   {
+    key: 'success-rate',
+    label: t('monitoring.call_success_rate'),
+    value: formatPercent(row.successRate),
+    valueClassName:
+      row.successRate >= 0.95
+        ? styles.goodText
+        : row.successRate >= 0.85
+          ? styles.warnText
+          : styles.badText,
+  },
+  {
     key: 'total-tokens',
     label: t('monitoring.total_tokens'),
     value: formatCompactNumber(row.totalTokens),
-  },
-  {
-    key: 'input-tokens',
-    label: t('monitoring.input_tokens'),
-    value: formatCompactNumber(row.inputTokens),
-  },
-  {
-    key: 'output-tokens',
-    label: t('monitoring.output_tokens'),
-    value: formatCompactNumber(row.outputTokens),
-  },
-  {
-    key: 'cached-tokens',
-    label: t('monitoring.cached_tokens'),
-    value: formatCompactNumber(row.cachedTokens),
   },
   {
     key: 'estimated-cost',
@@ -228,8 +230,8 @@ const getAccountSortValue = (row: MonitoringAccountRow, key: AccountSortKey) => 
       return row.totalCalls;
     case 'successCalls':
       return row.successCalls;
-    case 'failureCalls':
-      return row.failureCalls;
+    case 'successRate':
+      return row.successRate;
     case 'totalTokens':
       return row.totalTokens;
     case 'inputTokens':
@@ -283,6 +285,7 @@ type AccountSortKey =
   | 'totalCalls'
   | 'successCalls'
   | 'failureCalls'
+  | 'successRate'
   | 'totalTokens'
   | 'inputTokens'
   | 'outputTokens'
@@ -1229,18 +1232,12 @@ export function MonitoringCenterPage() {
     () => [
       {
         key: 'account',
-        label: accountGroupBy === 'apiKey'
-          ? t('monitoring.api_key_label')
-          : accountGroupBy === 'model'
-            ? t('monitoring.model_label')
-            : t('monitoring.account_label'),
+        label: getGroupDimensionLabel(accountGroupBy, t),
       },
       { key: 'total-calls', label: t('monitoring.total_calls'), sortKey: 'totalCalls' },
       { key: 'success-calls', label: t('monitoring.success_calls'), sortKey: 'successCalls' },
+      { key: 'success-rate', label: t('monitoring.call_success_rate'), sortKey: 'successRate' },
       { key: 'total-tokens', label: t('monitoring.total_tokens'), sortKey: 'totalTokens' },
-      { key: 'input-tokens', label: t('monitoring.input_tokens'), sortKey: 'inputTokens' },
-      { key: 'output-tokens', label: t('monitoring.output_tokens'), sortKey: 'outputTokens' },
-      { key: 'cached-tokens', label: t('monitoring.cached_tokens'), sortKey: 'cachedTokens' },
       { key: 'estimated-cost', label: t('monitoring.estimated_cost'), sortKey: 'totalCost' },
       { key: 'latest-request-time', label: t('monitoring.latest_request_time'), sortKey: 'lastSeenAt' },
       { key: 'action', label: t('common.action') },
@@ -1651,11 +1648,13 @@ export function MonitoringCenterPage() {
         {combinedError ? <div className={styles.errorBox}>{combinedError}</div> : null}
       </Panel>
 
-      <section className={styles.summaryGrid} aria-label={t('monitoring.usage_stats_title')}>
-        {summaryCards.map((card) => (
-          <SummaryCard key={card.label} {...card} />
-        ))}
-      </section>
+        <Panel title={t('monitoring.usage_stats_title')} subtitle={t('monitoring.usage_stats_desc')}>
+          <section className={styles.summaryGrid} aria-label={t('monitoring.usage_stats_title')}>
+            {summaryCards.map((card) => (
+              <SummaryCard key={card.label} {...card} />
+            ))}
+          </section>
+        </Panel>
 
       <section className={styles.rankingGrid}>
         <RankingPanel
@@ -1811,35 +1810,38 @@ export function MonitoringCenterPage() {
         </div>
       </Panel>
 
-      {focusScope ? (
-        <Card className={styles.focusPanel}>
-          <div className={styles.focusHeader}>
-            <span className={styles.focusKicker}>{t('monitoring.current_focus_title')}</span>
-            <strong>{`${t('monitoring.focused_scope_label')}: ${focusLabel}`}</strong>
+      <Card className={styles.focusPanel}>
+        <div className={styles.focusHeader}>
+          <span className={styles.focusKicker}>{t('monitoring.current_focus_title')}</span>
+          <strong>
+            {focusScope
+              ? `${getGroupDimensionLabel(focusScope.type, t)}: ${focusLabel}`
+              : t('monitoring.no_focus_title')}
+          </strong>
+          {!focusScope ? <small>{t('monitoring.no_focus_desc')}</small> : null}
+        </div>
+        <div className={styles.focusMetrics}>
+          <div>
+            <span>{t('monitoring.total_calls')}</span>
+            <strong>{formatCompactNumber(scopedSummary.totalCalls)}</strong>
           </div>
-          <div className={styles.focusMetrics}>
-            <div>
-              <span>{t('monitoring.total_calls')}</span>
-              <strong>{formatCompactNumber(scopedSummary.totalCalls)}</strong>
-            </div>
-            <div>
-              <span>{t('monitoring.call_success_rate')}</span>
-              <strong>{formatPercent(scopedSummary.successRate)}</strong>
-            </div>
-            <div>
-              <span>{t('monitoring.estimated_cost')}</span>
-              <strong>{hasPrices ? formatUsd(scopedSummary.totalCost) : '--'}</strong>
-            </div>
-            <div>
-              <span>{t('monitoring.avg_latency')}</span>
-              <strong>{formatDurationMs(scopedSummary.averageLatencyMs, { locale: i18n.language })}</strong>
-            </div>
+          <div>
+            <span>{t('monitoring.call_success_rate')}</span>
+            <strong>{formatPercent(scopedSummary.successRate)}</strong>
           </div>
-          <button type="button" className={styles.inlineActionButton} onClick={clearFocusScope}>
-            {t('monitoring.clear_focus')}
-          </button>
-        </Card>
-      ) : null}
+          <div>
+            <span>{t('monitoring.estimated_cost')}</span>
+            <strong>{hasPrices ? formatUsd(scopedSummary.totalCost) : '--'}</strong>
+          </div>
+          <div>
+            <span>{t('monitoring.avg_latency')}</span>
+            <strong>{formatDurationMs(scopedSummary.averageLatencyMs, { locale: i18n.language })}</strong>
+          </div>
+        </div>
+        <button type="button" className={styles.inlineActionButton} onClick={clearFocusScope} disabled={!focusScope}>
+          {t('monitoring.clear_focus')}
+        </button>
+      </Card>
 
       <Panel
         title={t('monitoring.analysis_view_title')}
