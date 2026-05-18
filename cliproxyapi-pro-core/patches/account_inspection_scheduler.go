@@ -700,56 +700,45 @@ func (s *accountInspectionScheduler) inspectOne(item accountInspectionActionItem
 		cancel()
 		return fmt.Errorf("account inspection already running")
 	}
-	s.cancel = cancel
-	s.setRunStateLocked(accountInspectionStateRunning)
-	s.status.LastStartedAt = time.Now().UnixMilli()
-	s.status.LastFinishedAt = 0
-	s.status.LastError = ""
-	s.status.Progress = accountInspectionProgress{Total: 1, Completed: 0, InFlight: 0, Pending: 1}
-	s.status.Summary = accountInspectionSummary{}
-	s.status.Logs = nil
-	s.status.Results = nil
 	schedule := s.schedule
 	s.mu.Unlock()
 
 	go func() {
 		defer cancel()
-		result, summary, runErr := s.executeSingleInspection(ctx, schedule.Settings, item)
-		finishedAt := time.Now().UnixMilli()
-		state := accountInspectionStateCompleted
+		result, _, runErr := s.executeSingleInspection(ctx, schedule.Settings, item)
 		if runErr != nil {
-			if errors.Is(runErr, context.Canceled) {
-				state = accountInspectionStateStopped
-			} else if errors.Is(runErr, context.DeadlineExceeded) {
-				state = accountInspectionStatePartial
-			} else {
-				state = accountInspectionStateFailed
-			}
+			s.appendLog("error", fmt.Sprintf("重新检查失败：%s", runErr.Error()))
+			return
 		}
 
 		s.mu.Lock()
-		s.setRunStateLocked(state)
-		s.status.LastFinishedAt = finishedAt
-		s.status.Summary = summary
-		if result.Key != "" {
-			s.status.Results = []accountInspectionResult{result}
-		} else {
-			s.status.Results = nil
+		if !s.isRunningLocked() {
+			s.mergeSingleInspectionResultLocked(result)
 		}
-		s.status.Progress.Completed = len(s.status.Results)
-		s.status.Progress.InFlight = 0
-		s.status.Progress.Pending = 0
-		if runErr != nil {
-			s.status.LastError = runErr.Error()
-		} else {
-			s.status.LastError = ""
-		}
-		s.cancel = nil
 		broadcast := s.statusBroadcastLocked(true)
 		s.mu.Unlock()
 		broadcast.send()
 	}()
 	return nil
+}
+
+func (s *accountInspectionScheduler) mergeSingleInspectionResultLocked(result accountInspectionResult) {
+	if result.Key == "" {
+		return
+	}
+
+	for index, current := range s.status.Results {
+		if current.Key == result.Key || (current.FileName == result.FileName && current.AuthIndex == result.AuthIndex) {
+			result.Executed = current.Executed
+			result.ExecuteError = current.ExecuteError
+			s.status.Summary = adjustAccountInspectionSummaryForResult(s.status.Summary, current, -1)
+			s.status.Summary = adjustAccountInspectionSummaryForResult(s.status.Summary, result, 1)
+			s.status.Results[index] = result
+			break
+		}
+	}
+
+	s.status.Results = limitAccountInspectionResults(sortAccountInspectionResults(s.status.Results), 500)
 }
 
 func (s *accountInspectionScheduler) executeSingleInspection(ctx context.Context, settings accountInspectionSettings, item accountInspectionActionItem) (accountInspectionResult, accountInspectionSummary, error) {
@@ -769,9 +758,7 @@ func (s *accountInspectionScheduler) executeSingleInspection(ctx context.Context
 			return accountInspectionResult{}, accountInspectionSummary{}, fmt.Errorf("unsupported provider")
 		}
 		s.appendLog("info", fmt.Sprintf("重新检查 %s", account.identity()))
-		s.updateProgress(1, 0, 1, true)
 		result := s.inspectAccount(ctx, account, settings, make(chan struct{}, accountInspectionMaxRefreshConcurrency))
-		s.updateProgress(1, 1, 0, true)
 		return result, summarizeAccountInspection(len(auths), 1, []accountInspectionAccount{account}, []accountInspectionResult{result}), nil
 	}
 	return accountInspectionResult{}, accountInspectionSummary{}, fmt.Errorf("account not found")
@@ -1886,6 +1873,47 @@ func limitAccountInspectionResults(results []accountInspectionResult, limit int)
 		return results
 	}
 	return results[:limit]
+}
+
+func sortAccountInspectionResults(results []accountInspectionResult) []accountInspectionResult {
+	sorted := append([]accountInspectionResult(nil), results...)
+	sort.Slice(sorted, func(i, j int) bool {
+		left := sorted[i]
+		right := sorted[j]
+		if left.Provider != right.Provider {
+			return left.Provider < right.Provider
+		}
+		return resultIdentity(left) < resultIdentity(right)
+	})
+	return sorted
+}
+
+func adjustAccountInspectionSummaryForResult(summary accountInspectionSummary, result accountInspectionResult, delta int) accountInspectionSummary {
+	summary.SampledCount += delta
+	switch result.Action {
+	case accountInspectionActionDelete:
+		summary.DeleteCount += delta
+	case accountInspectionActionDisable:
+		summary.DisableCount += delta
+	case accountInspectionActionEnable:
+		summary.EnableCount += delta
+	default:
+		summary.KeepCount += delta
+	}
+	if result.Error != "" {
+		summary.ErrorCount += delta
+	}
+	if result.Executed {
+		switch result.Action {
+		case accountInspectionActionDelete:
+			summary.ExecutedDeleteCount += delta
+		case accountInspectionActionDisable:
+			summary.ExecutedDisableCount += delta
+		case accountInspectionActionEnable:
+			summary.ExecutedEnableCount += delta
+		}
+	}
+	return summary
 }
 
 func resultIdentity(result accountInspectionResult) string {
