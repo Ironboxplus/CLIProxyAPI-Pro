@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState, type CSSProperties } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -10,6 +10,7 @@ import {
   IconChevronDown,
   IconChevronUp,
 } from '@/components/ui/icons';
+import { getAuthFileIcon } from '@/features/authFiles/constants';
 import {
   ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE,
   ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS,
@@ -82,6 +83,7 @@ type SummaryCard = {
   key: string;
   label: string;
   value: string;
+  description?: string;
   tone?: 'neutral' | 'good' | 'warn' | 'bad';
 };
 
@@ -112,15 +114,19 @@ type ProviderAccountStats = {
   provider: string;
   total: number;
   enabled: number;
+  highAvailable: number;
   disabled: number;
   quotaLow: number;
   abnormal: number;
 };
 
+type ResolvedTheme = 'light' | 'dark';
+
 type AuthFileAccountStats = {
   total: number;
   providerCount: number;
   enabled: number;
+  highAvailable: number;
   disabled: number;
   quotaLow: number;
   abnormal: number;
@@ -137,6 +143,7 @@ type AuthFileExportEntry = {
   name: string;
   content: string;
 };
+
 
 type ZipFileEntry = {
   path: string;
@@ -158,6 +165,15 @@ const ACCOUNT_INSPECTION_LOG_LIMIT = 200;
 
 const appendInspectionLogEntry = (entries: InspectionLogEntry[], entry: InspectionLogEntry) =>
   [...entries, entry].slice(-ACCOUNT_INSPECTION_LOG_LIMIT);
+
+const getProviderInitial = (label: string) => label.trim().charAt(0).toUpperCase() || '?';
+
+const getDocumentTheme = (): ResolvedTheme => {
+  if (typeof document === 'undefined') return 'light';
+  const root = document.documentElement;
+  const theme = root.dataset.theme || root.getAttribute('data-theme') || root.className;
+  return String(theme).toLowerCase().includes('dark') ? 'dark' : 'light';
+};
 
 const emptyAutoExecutionCounts = (): AutoExecutionCounts => ({
   delete: 0,
@@ -407,6 +423,7 @@ const incrementProviderStats = (stats: ProviderAccountStats, disabled: boolean, 
   } else {
     stats.enabled += 1;
   }
+  if (!disabled && !quotaLow && !abnormal) stats.highAvailable += 1;
   if (quotaLow) stats.quotaLow += 1;
   if (abnormal) stats.abnormal += 1;
 };
@@ -415,6 +432,7 @@ const emptyProviderAccountStats = (provider: string): ProviderAccountStats => ({
   provider,
   total: 0,
   enabled: 0,
+  highAvailable: 0,
   disabled: 0,
   quotaLow: 0,
   abnormal: 0,
@@ -429,6 +447,7 @@ const buildAuthFileAccountStats = (
     total: files.length,
     providerCount: 0,
     enabled: 0,
+    highAvailable: 0,
     disabled: 0,
     quotaLow: 0,
     abnormal: 0,
@@ -451,6 +470,7 @@ const buildAuthFileAccountStats = (
     } else {
       stats.enabled += 1;
     }
+    if (!disabled && !quotaLow && !abnormal) stats.highAvailable += 1;
     if (abnormal) stats.abnormal += 1;
     if (quotaLow) stats.quotaLow += 1;
 
@@ -550,6 +570,11 @@ const {
 } = ACCOUNT_INSPECTION_SETTING_LIMITS;
 
 const formatTimestamp = (value: number, locale: string) => new Date(value).toLocaleString(locale);
+
+const formatInspectionInterval = (minutes: number, locale: string) =>
+  new Intl.NumberFormat(locale, { style: 'unit', unit: 'minute', unitDisplay: 'short' }).format(minutes);
+
+const DONUT_COLORS = ['#2563eb', '#22c55e', '#f97316', '#8b5cf6', '#06b6d4', '#ec4899'];
 
 const formatPercent = (value: number | null) => (value === null ? '--' : `${value.toFixed(1)}%`);
 
@@ -921,8 +946,19 @@ export function AccountInspectionPage() {
   const [executing, setExecuting] = useState(false);
   const [recheckingKey, setRecheckingKey] = useState<string | null>(null);
   const [exportingAuthFiles, setExportingAuthFiles] = useState(false);
+  const [selectedAssetProvider, setSelectedAssetProvider] = useState<string>('all');
+  const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getDocumentTheme());
   const logListRef = useRef<HTMLDivElement | null>(null);
+  const resultsPanelRef = useRef<HTMLDivElement | null>(null);
   const refreshedBackendFinishedAtRef = useRef(0);
+
+
+  useEffect(() => {
+    const root = document.documentElement;
+    const observer = new MutationObserver(() => setResolvedTheme(getDocumentTheme()));
+    observer.observe(root, { attributes: true, attributeFilter: ['class', 'data-theme'] });
+    return () => observer.disconnect();
+  }, []);
 
   useEffect(() => {
     dispatchBackendState({
@@ -1337,42 +1373,64 @@ export function AccountInspectionPage() {
     [authFiles, quotaStore]
   );
 
+  useEffect(() => {
+    if (selectedAssetProvider === 'all') return;
+    if (authFileStats.providers.some((provider) => provider.provider === selectedAssetProvider)) return;
+    setSelectedAssetProvider('all');
+  }, [authFileStats.providers, selectedAssetProvider]);
+
+  const selectedAssetStats = useMemo<AuthFileAccountStats | ProviderAccountStats>(() => {
+    if (selectedAssetProvider === 'all') return authFileStats;
+    return authFileStats.providers.find((provider) => provider.provider === selectedAssetProvider) ?? authFileStats;
+  }, [authFileStats, selectedAssetProvider]);
+
+  const selectedAssetLabel = selectedAssetProvider === 'all'
+    ? t('monitoring.account_inspection_account_summary_title')
+    : resolveProviderDisplayLabel(selectedAssetProvider);
+
   const accountAssetCards = useMemo<SummaryCard[]>(() => [
-    {
-      key: 'providers',
-      label: t('monitoring.account_inspection_provider_count'),
-      value: authFilesLoaded ? String(authFileStats.providerCount) : '--',
-    },
     {
       key: 'total',
       label: t('monitoring.account_inspection_account_total'),
-      value: authFilesLoaded ? String(authFileStats.total) : '--',
+      value: authFilesLoaded ? String(selectedAssetStats.total) : '--',
+      description: selectedAssetLabel,
     },
     {
       key: 'enabled',
       label: t('monitoring.account_inspection_account_enabled'),
-      value: authFilesLoaded ? String(authFileStats.enabled) : '--',
-      tone: authFilesLoaded && authFileStats.enabled > 0 ? 'good' : 'neutral',
+      value: authFilesLoaded ? String(selectedAssetStats.enabled) : '--',
+      description: t('monitoring.account_inspection_inventory_health'),
+      tone: authFilesLoaded && selectedAssetStats.enabled > 0 ? 'good' : 'neutral',
     },
     {
-      key: 'disabled',
-      label: t('monitoring.account_inspection_account_disabled'),
-      value: authFilesLoaded ? String(authFileStats.disabled) : '--',
-      tone: authFilesLoaded && authFileStats.disabled > 0 ? 'warn' : 'neutral',
+      key: 'highAvailable',
+      label: t('monitoring.account_inspection_high_available', { defaultValue: 'High availability' }),
+      value: authFilesLoaded ? String(selectedAssetStats.highAvailable) : '--',
+      description: t('monitoring.account_inspection_high_available_desc', { defaultValue: 'Quota-ready non-error accounts' }),
+      tone: authFilesLoaded && selectedAssetStats.highAvailable > 0 ? 'good' : 'neutral',
     },
     {
       key: 'quotaLow',
       label: t('monitoring.account_inspection_account_quota_low'),
-      value: authFilesLoaded ? String(authFileStats.quotaLow) : '--',
-      tone: authFilesLoaded && authFileStats.quotaLow > 0 ? 'bad' : 'neutral',
+      value: authFilesLoaded ? String(selectedAssetStats.quotaLow) : '--',
+      description: t('monitoring.account_inspection_settings_auto_execute_quota_limit_disable_label'),
+      tone: authFilesLoaded && selectedAssetStats.quotaLow > 0 ? 'bad' : 'neutral',
+    },
+    {
+      key: 'disabled',
+      label: t('monitoring.account_inspection_account_disabled'),
+      value: authFilesLoaded ? String(selectedAssetStats.disabled) : '--',
+      description: t('monitoring.account_inspection_blast_radius'),
+      tone: authFilesLoaded && selectedAssetStats.disabled > 0 ? 'warn' : 'neutral',
     },
     {
       key: 'abnormal',
       label: t('monitoring.account_inspection_account_abnormal'),
-      value: authFilesLoaded ? String(authFileStats.abnormal) : '--',
-      tone: authFilesLoaded && authFileStats.abnormal > 0 ? 'bad' : 'neutral',
+      value: authFilesLoaded ? String(selectedAssetStats.abnormal) : '--',
+      description: t('monitoring.account_inspection_settings_auto_execute_account_error_action_label'),
+      tone: authFilesLoaded && selectedAssetStats.abnormal > 0 ? 'bad' : 'neutral',
     },
-  ], [authFileStats, authFilesLoaded, t]);
+  ], [authFilesLoaded, selectedAssetLabel, selectedAssetStats, t]);
 
   const actionStats = useMemo(() => {
     const suggested = countActions(actionableResults);
@@ -1392,53 +1450,33 @@ export function AccountInspectionPage() {
     };
   }, [actionableResults, autoExecutionCounts, result]);
 
-  const inspectionSummaryCards = useMemo<SummaryCard[]>(() => {
-    const summarySource =
-      result?.summary ?? (runStatus === 'running' || runStatus === 'paused' ? progress.summary : null);
-
-    if (!summarySource) {
-      return [
-        { key: 'sampled', label: t('monitoring.account_inspection_sampled_accounts'), value: '--' },
-        { key: 'auto', label: t('monitoring.account_inspection_auto_processed_count', { defaultValue: 'Auto processed' }), value: '--' },
-        { key: 'manual', label: t('monitoring.account_inspection_manual_pending_count', { defaultValue: 'Manual pending' }), value: '--' },
-        { key: 'keep', label: t('monitoring.account_inspection_keep_count'), value: '--' },
-        { key: 'error', label: t('monitoring.account_inspection_error_count', { defaultValue: 'Errors' }), value: '--' },
-      ];
-    }
-
-    return [
-      {
-        key: 'sampled',
-        label: t('monitoring.account_inspection_sampled_accounts'),
-        value: String(summarySource.sampledCount),
-      },
-      {
-        key: 'auto',
-        label: t('monitoring.account_inspection_auto_processed_count', { defaultValue: 'Auto processed' }),
-        value: String(actionStats.autoTotal),
-        tone: actionStats.autoTotal > 0 ? 'good' : 'neutral',
-      },
-      {
-        key: 'manual',
-        label: t('monitoring.account_inspection_manual_pending_count', { defaultValue: 'Manual pending' }),
-        value: String(actionStats.manualTotal),
-        tone: actionStats.manualTotal > 0 ? 'warn' : 'neutral',
-      },
-      {
-        key: 'keep',
-        label: t('monitoring.account_inspection_keep_count'),
-        value: String(actionStats.keep),
-      },
-      {
-        key: 'error',
-        label: t('monitoring.account_inspection_error_count', { defaultValue: 'Errors' }),
-        value: String(actionStats.error),
-        tone: actionStats.error > 0 ? 'bad' : 'neutral',
-      },
-    ];
-  }, [actionStats, progress.summary, result, runStatus, t]);
-
   const pendingActionCount = actionableResults.length;
+  const hasAutoExecutionPolicy = hasAccountInspectionAutoExecutePolicies(inspectionSettings);
+  const inspectionScopeLabel = inspectionSettings.targetType === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
+    ? t('monitoring.filter_all_providers')
+    : resolveProviderDisplayLabel(inspectionSettings.targetType);
+  const settingEnabledLabel = t('monitoring.account_inspection_setting_enabled', { defaultValue: 'Enabled' });
+  const settingDisabledLabel = t('monitoring.account_inspection_setting_disabled', { defaultValue: 'Disabled' });
+  const quotaLimitAutoLabel = inspectionSettings.autoExecuteQuotaLimitDisable ? settingEnabledLabel : settingDisabledLabel;
+  const quotaRecoveryAutoLabel = inspectionSettings.autoExecuteQuotaRecoveryEnable ? settingEnabledLabel : settingDisabledLabel;
+  const accountErrorActionLabel = t(
+    AUTO_ERROR_ACTION_OPTIONS.find((option) => option.value === inspectionSettings.autoExecuteAccountErrorAction)?.labelKey
+      ?? 'monitoring.account_inspection_settings_account_error_action_none'
+  );
+  const scheduleStatusLabel = scheduleResponse?.schedule.enabled
+    ? formatInspectionInterval(scheduleResponse.schedule.intervalMinutes, i18n.language)
+    : settingDisabledLabel;
+  const autoExecutionResultLabel = actionStats.autoTotal > 0
+    ? [
+        `${t('monitoring.account_inspection_action_enable')}: ${actionStats.autoEnable}`,
+        `${t('monitoring.account_inspection_action_disable')}: ${actionStats.autoDisable}`,
+        `${t('monitoring.account_inspection_action_delete')}: ${actionStats.autoDelete}`,
+      ].join(' · ')
+    : t('monitoring.account_inspection_auto_execute_no_actions');
+  const showInspectionResults = useCallback((filter: ResultFilter) => {
+    setResultFilter(filter);
+    requestAnimationFrame(() => resultsPanelRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' }));
+  }, []);
 
   const operationPhase = useMemo(() => {
     if (executing) return t('monitoring.account_inspection_phase_executing', { defaultValue: 'Executing suggested actions' });
@@ -1454,20 +1492,6 @@ export function AccountInspectionPage() {
     if (result) return t('monitoring.account_inspection_phase_completed', { defaultValue: 'Inspection completed' });
     return t('monitoring.account_inspection_phase_idle', { defaultValue: 'Ready to inspect' });
   }, [executing, pendingActionCount, progress.completed, progress.inFlight, result, runStatus, t]);
-
-  const policySummary = useMemo(() => {
-    const policies: string[] = [];
-    if (inspectionSettings.autoExecuteQuotaLimitDisable) {
-      policies.push(t('monitoring.account_inspection_settings_auto_execute_quota_limit_disable_label'));
-    }
-    if (inspectionSettings.autoExecuteQuotaRecoveryEnable) {
-      policies.push(t('monitoring.account_inspection_settings_auto_execute_quota_recovery_enable_label'));
-    }
-    if (inspectionSettings.autoExecuteAccountErrorAction !== 'none') {
-      policies.push(`${t('monitoring.account_inspection_settings_auto_execute_account_error_action_label')}: ${formatActionLabel(inspectionSettings.autoExecuteAccountErrorAction, t)}`);
-    }
-    return policies.length > 0 ? policies.join(' · ') : t('monitoring.account_inspection_auto_policy_off', { defaultValue: 'Automatic execution is off' });
-  }, [inspectionSettings, t]);
 
   const resultEmptyMessage = runStatus === 'running'
     ? t('monitoring.account_inspection_results_generating', { defaultValue: 'Inspection is running. Results will appear as soon as the backend publishes a snapshot.' })
@@ -1643,205 +1667,274 @@ export function AccountInspectionPage() {
       <Card className={styles.heroCard}>
         <div className={styles.heroHeader}>
           <div className={styles.heroCopy}>
-            <span className={styles.heroEyebrow}>{t('monitoring.account_inspection_eyebrow')}</span>
             <h1 className={styles.heroTitle}>{t('monitoring.account_inspection_title')}</h1>
             <p className={styles.heroSubtitle}>{t('monitoring.account_inspection_desc')}</p>
           </div>
           <div className={styles.heroActions}>
             <Button
               variant="secondary"
+              className={styles.heroActionButton}
               onClick={handleExportAuthFiles}
               loading={exportingAuthFiles}
               disabled={exportingAuthFiles || connectionStatus !== 'connected'}
             >
               {t('monitoring.account_inspection_auth_files_export')}
             </Button>
-            <Button
-              variant="primary"
-              onClick={handleRunInspection}
-              loading={runStatus === 'running'}
-              disabled={runStatus === 'running' || executing || connectionStatus !== 'connected'}
-            >
-              {formatRunInspectionButtonLabel(runStatus, t)}
-            </Button>
           </div>
         </div>
-      </Card>
 
-      <section className={styles.summarySection}>
-        <div className={styles.summarySectionHeader}>
-          <div>
-            <h2>{t('monitoring.account_inspection_asset_overview_title', { defaultValue: 'Account Asset Overview' })}</h2>
-            <p>{t('monitoring.account_inspection_asset_overview_desc', { defaultValue: 'Start from the full account inventory: provider distribution, enabled state, quota exhaustion, and abnormal accounts.' })}</p>
-          </div>
-        </div>
-        <div className={styles.assetOverviewLayout}>
-          <div className={styles.assetMetricGrid}>
-            {accountAssetCards.map((card) => (
+        <div className={styles.assetOverviewGrid}>
+          <div className={styles.assetKpiGrid}>
+            {accountAssetCards.map((card, index) => (
               <Card
                 key={card.key}
-                className={[styles.summaryCard, styles.assetMetricCard, summaryToneClass[card.tone ?? 'neutral']]
+                className={[styles.professionalMetricCard, styles[`professionalMetricCard${index + 1}`], summaryToneClass[card.tone ?? 'neutral']]
                   .filter(Boolean)
                   .join(' ')}
               >
-                <span>{card.label}</span>
-                <strong>{card.value}</strong>
+                <div className={styles.professionalMetricHeader}>
+                  <span className={styles.professionalMetricIcon} aria-hidden="true" />
+                  <strong>{card.label}</strong>
+                </div>
+                <div className={styles.professionalMetricBody}>
+                  <span>{card.description}</span>
+                  <strong>{card.value}</strong>
+                </div>
               </Card>
             ))}
           </div>
-          <Card className={styles.providerPanel}>
-            <div className={styles.providerPanelHeader}>
-              <strong>{t('monitoring.account_inspection_provider_distribution_title', { defaultValue: 'Provider Distribution' })}</strong>
-              <span>{authFilesLoaded ? t('monitoring.account_inspection_provider_distribution_desc', { defaultValue: '{{count}} providers detected', count: authFileStats.providerCount }) : t('common.loading')}</span>
+
+          <Card className={styles.providerDistributionCard}>
+            <div className={styles.providerDistributionHeader}>
+              <div>
+                <h3>{t('monitoring.account_inspection_provider_distribution_title', { defaultValue: 'Provider Distribution' })}</h3>
+                <p>{authFilesLoaded ? t('monitoring.account_inspection_provider_distribution_desc', { defaultValue: '{{count}} providers detected', count: authFileStats.providerCount }) : t('common.loading')}</p>
+              </div>
+              <span>{selectedAssetLabel}</span>
             </div>
-            <div className={styles.providerList}>
-              {authFileStats.providers.length > 0 ? authFileStats.providers.map((provider) => (
-                <div key={provider.provider} className={styles.providerRow}>
-                  <div className={styles.providerNameCell}>
-                    <strong>{resolveProviderDisplayLabel(provider.provider)}</strong>
-                    <span>{`${provider.total} ${t('monitoring.account_inspection_account_total')}`}</span>
-                  </div>
-                  <div className={styles.providerStatusGrid}>
-                    <span>{`${t('monitoring.account_inspection_account_enabled')} ${provider.enabled}`}</span>
-                    <span>{`${t('monitoring.account_inspection_account_disabled')} ${provider.disabled}`}</span>
-                    <span className={provider.quotaLow > 0 ? styles.warningText : undefined}>{`${t('monitoring.account_inspection_account_quota_low')} ${provider.quotaLow}`}</span>
-                    <span className={provider.abnormal > 0 ? styles.errorText : undefined}>{`${t('monitoring.account_inspection_account_abnormal')} ${provider.abnormal}`}</span>
-                  </div>
+            <div className={styles.providerSelectorList}>
+              <button
+                type="button"
+                className={[styles.providerSelectorRow, selectedAssetProvider === 'all' ? styles.providerSelectorRowActive : '']
+                  .filter(Boolean)
+                  .join(' ')}
+                onClick={() => setSelectedAssetProvider('all')}
+              >
+                <div>
+                  <span className={styles.providerSelectorTitle}>
+                    <span className={styles.providerLogoFallback} aria-hidden="true">Σ</span>
+                    <strong>{t('monitoring.account_inspection_account_summary_title')}</strong>
+                  </span>
+                  <span>{`${authFileStats.total} ${t('monitoring.account_inspection_account_total')}`}</span>
                 </div>
-              )) : <div className={styles.emptyBlockSmall}>{authFilesLoaded ? t('monitoring.account_inspection_empty') : t('common.loading')}</div>}
+                <span aria-hidden="true">
+                  <i style={{ '--bar-width': authFileStats.total > 0 ? '100%' : '0%', '--bar-color': DONUT_COLORS[0] } as CSSProperties} />
+                </span>
+              </button>
+              {authFileStats.providers.length > 0 ? authFileStats.providers.map((provider, index) => {
+                const share = authFileStats.total > 0 ? provider.total / authFileStats.total : 0;
+                return (
+                  <button
+                    type="button"
+                    key={provider.provider}
+                    className={[styles.providerSelectorRow, selectedAssetProvider === provider.provider ? styles.providerSelectorRowActive : '']
+                      .filter(Boolean)
+                      .join(' ')}
+                    onClick={() => setSelectedAssetProvider(provider.provider)}
+                  >
+                    <div>
+                      <span className={styles.providerSelectorTitle}>
+                        {getAuthFileIcon(provider.provider, resolvedTheme) ? (
+                          <img src={getAuthFileIcon(provider.provider, resolvedTheme) ?? ''} alt="" aria-hidden="true" />
+                        ) : (
+                          <span className={styles.providerLogoFallback} aria-hidden="true">{getProviderInitial(resolveProviderDisplayLabel(provider.provider))}</span>
+                        )}
+                        <strong>{resolveProviderDisplayLabel(provider.provider)}</strong>
+                      </span>
+                      <span>{`${provider.total} ${t('monitoring.account_inspection_account_total')} · ${provider.highAvailable} ${t('monitoring.account_inspection_high_available', { defaultValue: 'High availability' })}`}</span>
+                    </div>
+                    <span aria-hidden="true">
+                      <i style={{ '--bar-width': `${Math.min(Math.max(share * 100, provider.total > 0 ? 1 : 0), 100)}%`, '--bar-color': DONUT_COLORS[index % DONUT_COLORS.length] } as CSSProperties} />
+                    </span>
+                  </button>
+                );
+              }) : <div className={styles.emptyBlockSmall}>{authFilesLoaded ? t('monitoring.account_inspection_empty') : t('common.loading')}</div>}
             </div>
           </Card>
-        </div>
-      </section>
-
-      <Card className={`${styles.panel} ${styles.controlPanel}`}>
-        <div className={styles.panelHeader}>
-          <div>
-            <h2 className={styles.panelTitle}>{t('monitoring.account_inspection_control_title')}</h2>
-            <p className={styles.panelSubtitle}>{t('monitoring.account_inspection_control_desc')}</p>
-          </div>
-          <div className={styles.panelActions}>
-            <Button
-              variant="secondary"
-              onClick={openSettingsModal}
-              disabled={(runStatus === 'running' || runStatus === 'paused') || executing}
-            >
-              {t('monitoring.account_inspection_settings_button')}
-            </Button>
-          </div>
-        </div>
-
-        <div className={styles.controlLayout}>
-          <div className={styles.metaRow}>
-            <span className={styles.metaPill}>{`${t('monitoring.account_inspection_target_type')}: ${inspectionSettings.targetType}`}</span>
-            <span className={styles.metaPill}>{`${t('monitoring.account_inspection_schedule_status')}: ${scheduleResponse?.schedule.enabled ? t('common.yes') : t('common.no')}`}</span>
-            <span className={styles.metaPill}>{`${t('monitoring.account_inspection_schedule_next_run')}: ${scheduleResponse?.schedule.enabled && scheduleResponse.schedule.nextRunAt ? formatTimestamp(scheduleResponse.schedule.nextRunAt, i18n.language) : '--'}`}</span>
-          </div>
-          <div className={styles.policyBanner}>
-            <strong>{operationPhase}</strong>
-            <span>{policySummary}</span>
-          </div>
-
-          <div className={styles.progressSection}>
-            <div className={styles.progressHeader}>
-              <div>
-                <strong>{t('monitoring.account_inspection_progress_title')}</strong>
-                <small>{progressLabel}</small>
-              </div>
-              <span>{`${progress.percent}%`}</span>
-            </div>
-            <div className={styles.progressTrack}>
-              <span className={styles.progressBar} style={{ width: `${Math.max(0, Math.min(100, progress.percent))}%` }} />
-            </div>
-            <div className={styles.progressFooter}>
-              <div className={styles.progressMeta}>
-                <span>{`${t('monitoring.account_inspection_workers')}: ${inspectionSettings.workers}`}</span>
-                <span>{`${t('monitoring.account_inspection_sample_size')}: ${inspectionSettings.sampleSize || t('monitoring.account_inspection_all_accounts', { defaultValue: 'All' })}`}</span>
-                {runStatus === 'paused' ? <strong>{t('monitoring.account_inspection_paused')}</strong> : null}
-              </div>
-              <div className={styles.progressActions}>
-                <Button
-                  variant="primary"
-                  onClick={handleRunInspection}
-                  loading={runStatus === 'running'}
-                  disabled={runStatus === 'running' || executing || connectionStatus !== 'connected'}
-                >
-                  {formatRunInspectionButtonLabel(runStatus, t)}
-                </Button>
-                <Button variant="secondary" onClick={handlePauseInspection} disabled={runStatus !== 'running' || executing}>
-                  {t('monitoring.account_inspection_pause')}
-                </Button>
-                <Button variant="danger" onClick={handleStopInspection} disabled={(runStatus !== 'running' && runStatus !== 'paused') || executing}>
-                  {t('monitoring.account_inspection_stop')}
-                </Button>
-              </div>
-            </div>
-          </div>
         </div>
       </Card>
 
-      <section className={styles.summarySection}>
-        <div className={styles.summarySectionHeader}>
+      <section className={styles.operationSection}>
+        <div className={styles.operationModuleHeader}>
           <div>
-            <h2>{t('monitoring.account_inspection_inspection_summary_title')}</h2>
-            <p>{t('monitoring.account_inspection_inspection_summary_desc')}</p>
+            <h2>{t('monitoring.account_inspection_control_title')}</h2>
+            <p>{t('monitoring.account_inspection_control_desc')}</p>
           </div>
-        </div>
-        <div className={styles.summaryGridCompact}>
-          {inspectionSummaryCards.map((card) => (
-            <Card
-              key={card.key}
-              className={[styles.summaryCard, summaryToneClass[card.tone ?? 'neutral']]
-                .filter(Boolean)
-                .join(' ')}
-            >
-              <span>{card.label}</span>
-              <strong>{card.value}</strong>
-            </Card>
-          ))}
-        </div>
-        <div className={styles.actionBreakdownGrid}>
-          <Card className={styles.actionBreakdownCard}>
-            <strong>{t('monitoring.account_inspection_auto_execution_breakdown', { defaultValue: 'Automatic policy execution' })}</strong>
-            <div>
-              <span>{`${t('monitoring.account_inspection_action_delete')}: ${actionStats.autoDelete}`}</span>
-              <span>{`${t('monitoring.account_inspection_action_disable')}: ${actionStats.autoDisable}`}</span>
-              <span>{`${t('monitoring.account_inspection_action_enable')}: ${actionStats.autoEnable}`}</span>
+          {result ? (
+            <div className={styles.cockpitStatusPills}>
+              <span>{`${t('monitoring.last_sync')}: ${formatTimestamp(result.finishedAt, i18n.language)}`}</span>
+              <span>{`${t('monitoring.account_inspection_pending_actions')}: ${pendingActionCount}`}</span>
             </div>
-          </Card>
-          <Card className={styles.actionBreakdownCard}>
-            <strong>{t('monitoring.account_inspection_manual_execution_breakdown', { defaultValue: 'Manual review queue' })}</strong>
-            <div>
-              <span>{`${t('monitoring.account_inspection_action_delete')}: ${actionStats.manualDelete}`}</span>
-              <span>{`${t('monitoring.account_inspection_action_disable')}: ${actionStats.manualDisable}`}</span>
-              <span>{`${t('monitoring.account_inspection_action_enable')}: ${actionStats.manualEnable}`}</span>
+          ) : null}
+        </div>
+        <div className={styles.inspectionOperationGrid}>
+          <div className={styles.operationMainColumn}>
+            <div className={styles.operationMainStack}>
+              <Card className={styles.inspectionStatusCard}>
+                <div className={styles.inspectionProgressHero}>
+                  <div className={styles.progressRing} style={{ '--progress': `${Math.max(0, Math.min(100, progress.percent))}%` } as CSSProperties}>
+                    <strong>{`${progress.percent}%`}</strong>
+                  </div>
+                  <div className={styles.inspectionStatusCopy}>
+                    <strong>{operationPhase}</strong>
+                    <span>{progress.percent >= 100 ? t('monitoring.account_inspection_phase_completed', { defaultValue: 'Inspection completed' }) : progressLabel}</span>
+                    <small>{`${t('monitoring.last_sync')}: ${result?.finishedAt ? formatTimestamp(result.finishedAt, i18n.language) : '--'}`}</small>
+                  </div>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={openSettingsModal}
+                    disabled={(runStatus === 'running' || runStatus === 'paused') || executing}
+                  >
+                    {t('monitoring.account_inspection_settings_button')}
+                  </Button>
+                </div>
+                <div className={styles.inspectionConfigGrid}>
+                  <span>
+                    <small>{t('monitoring.account_inspection_detection_scope', { defaultValue: 'Detection Scope' })}</small>
+                    <strong>{inspectionScopeLabel}</strong>
+                  </span>
+                  <span>
+                    <small>{t('monitoring.account_inspection_quota_threshold_short', { defaultValue: 'Quota Threshold' })}</small>
+                    <strong>{`${inspectionSettings.usedPercentThreshold}%`}</strong>
+                  </span>
+                  <span>
+                    <small>{t('monitoring.account_inspection_sample_size')}</small>
+                    <strong>{inspectionSettings.sampleSize || t('monitoring.account_inspection_all_accounts', { defaultValue: 'All' })}</strong>
+                  </span>
+                  <span>
+                    <small>{t('monitoring.account_inspection_scheduled_inspection_short', { defaultValue: 'Scheduled Inspection' })}</small>
+                    <strong>{scheduleStatusLabel}</strong>
+                  </span>
+                  <span>
+                    <small>{t('monitoring.account_inspection_quota_limit_disable_short', { defaultValue: 'Quota Limit Disable' })}</small>
+                    <strong>{quotaLimitAutoLabel}</strong>
+                  </span>
+                  <span>
+                    <small>{t('monitoring.account_inspection_quota_recovery_enable_short', { defaultValue: 'Quota Recovery Enable' })}</small>
+                    <strong>{quotaRecoveryAutoLabel}</strong>
+                  </span>
+                  <span>
+                    <small>{t('monitoring.account_inspection_account_error_action_short', { defaultValue: 'Account Error Action' })}</small>
+                    <strong>{accountErrorActionLabel}</strong>
+                  </span>
+                  <span>
+                    <small>{t('monitoring.account_inspection_next_execution_short', { defaultValue: 'Next Execution' })}</small>
+                    <strong>{scheduleResponse?.schedule.enabled && scheduleResponse.schedule.nextRunAt ? formatTimestamp(scheduleResponse.schedule.nextRunAt, i18n.language) : '--'}</strong>
+                  </span>
+                </div>
+              </Card>
+
+              <Card className={styles.inspectionControlCard}>
+                <h3>{t('monitoring.account_inspection_control_title')}</h3>
+                <div className={styles.inspectionControlActions}>
+                  <Button
+                    variant="primary"
+                    onClick={handleRunInspection}
+                    loading={runStatus === 'running'}
+                    disabled={runStatus === 'running' || executing || connectionStatus !== 'connected'}
+                  >
+                    {formatRunInspectionButtonLabel(runStatus, t)}
+                  </Button>
+                  <Button variant="secondary" onClick={handlePauseInspection} disabled={runStatus !== 'running' || executing}>
+                    {t('monitoring.account_inspection_pause')}
+                  </Button>
+                  <Button variant="danger" onClick={handleStopInspection} disabled={(runStatus !== 'running' && runStatus !== 'paused') || executing}>
+                    {t('monitoring.account_inspection_stop')}
+                  </Button>
+                </div>
+              </Card>
             </div>
+          </div>
+
+          <Card className={styles.actionStudioCard}>
+            <div className={styles.resultOverviewSection}>
+              <h3>{t('monitoring.account_inspection_inspection_summary_title')}</h3>
+              <div className={styles.resultOverviewGrid}>
+                <span className={styles.resultOverviewGood}>
+                  <small>{t('monitoring.account_inspection_auto_processed_count', { defaultValue: 'Auto processed' })}</small>
+                  <strong>{actionStats.autoTotal}</strong>
+                </span>
+                <span className={styles.resultOverviewWarn}>
+                  <small>{t('monitoring.account_inspection_manual_pending_count', { defaultValue: 'Manual pending' })}</small>
+                  <strong>{actionStats.manualTotal}</strong>
+                </span>
+                <span>
+                  <small>{t('monitoring.account_inspection_keep_count')}</small>
+                  <strong>{actionStats.keep}</strong>
+                </span>
+                <span className={styles.resultOverviewBad}>
+                  <small>{t('monitoring.account_inspection_error_count', { defaultValue: 'Errors' })}</small>
+                  <strong>{actionStats.error}</strong>
+                </span>
+              </div>
+            </div>
+
+            {hasAutoExecutionPolicy ? (
+              <div className={styles.strategyResultSection}>
+                <div className={styles.strategySectionHeader}>
+                  <h3>{t('monitoring.account_inspection_auto_execution_breakdown', { defaultValue: 'Automatic policy execution' })}</h3>
+                  <button type="button" onClick={() => showInspectionResults('processed')}>{t('monitoring.view_all', { defaultValue: 'View All' })}</button>
+                </div>
+                <div className={styles.strategyTotalsRow}>
+                  <span>{`${t('monitoring.account_inspection_action_enable')} ${actionStats.autoEnable}`}</span>
+                  <span>{`${t('monitoring.account_inspection_action_disable')} ${actionStats.autoDisable}`}</span>
+                  <span>{`${t('monitoring.account_inspection_action_delete')} ${actionStats.autoDelete}`}</span>
+                  <span>{`${t('monitoring.account_inspection_action_keep')} ${actionStats.keep}`}</span>
+                </div>
+                <div className={styles.strategyActivityRow}>
+                  <span className={styles.strategyActivityIcon} aria-hidden="true" />
+                  <span>{result?.finishedAt ? formatTimestamp(result.finishedAt, i18n.language) : '--'}</span>
+                  <strong>{autoExecutionResultLabel}</strong>
+                </div>
+              </div>
+            ) : (
+              <div className={styles.manualPendingSection}>
+                <h3>{`${t('monitoring.account_inspection_manual_execution_breakdown', { defaultValue: 'Manual review queue' })} (${actionStats.manualTotal})`}</h3>
+                {actionStats.manualTotal > 0 ? (
+                  <div className={styles.manualPendingList}>
+                    <span>{`${t('monitoring.account_inspection_action_delete')}: ${actionStats.manualDelete}`}</span>
+                    <span>{`${t('monitoring.account_inspection_action_disable')}: ${actionStats.manualDisable}`}</span>
+                    <span>{`${t('monitoring.account_inspection_action_enable')}: ${actionStats.manualEnable}`}</span>
+                    <Button
+                      variant="primary"
+                      size="sm"
+                      onClick={handleExecutePlanned}
+                      loading={executing}
+                      disabled={!result || runStatus === 'running' || executing || pendingActionCount === 0}
+                    >
+                      {executing ? t('monitoring.account_inspection_executing') : t('monitoring.account_inspection_execute_now')}
+                    </Button>
+                  </div>
+                ) : (
+                  <div className={styles.manualPendingEmpty}>
+                    <span aria-hidden="true">✓</span>
+                    <strong>{t('monitoring.account_inspection_no_pending_actions')}</strong>
+                    <small>{t('monitoring.account_inspection_auto_execute_no_actions')}</small>
+                  </div>
+                )}
+              </div>
+            )}
           </Card>
         </div>
       </section>
 
-      <Card className={styles.panel}>
+      <div ref={resultsPanelRef}>
+        <Card className={styles.panel}>
         <div className={styles.panelHeader}>
           <div>
             <h2 className={styles.panelTitle}>{t('monitoring.account_inspection_results_title')}</h2>
             <p className={styles.panelSubtitle}>{t('monitoring.account_inspection_results_desc')}</p>
-          </div>
-          <div className={styles.resultsHeaderActions}>
-            {result ? (
-              <div className={styles.panelMeta}>
-                <span>{`${t('monitoring.last_sync')}: ${formatTimestamp(result.finishedAt, i18n.language)}`}</span>
-                <span>{`${t('monitoring.account_inspection_pending_actions')}: ${pendingActionCount}`}</span>
-              </div>
-            ) : null}
-            <Button
-              variant="primary"
-              size="sm"
-              onClick={handleExecutePlanned}
-              loading={executing}
-              disabled={!result || runStatus === 'running' || executing || pendingActionCount === 0}
-            >
-              {executing ? t('monitoring.account_inspection_executing') : t('monitoring.account_inspection_execute_now')}
-            </Button>
           </div>
         </div>
 
@@ -1971,7 +2064,8 @@ export function AccountInspectionPage() {
             </Button>
           </div>
         )}
-      </Card>
+        </Card>
+      </div>
 
       <Card className={styles.panel}>
         <div className={styles.panelHeader}>
