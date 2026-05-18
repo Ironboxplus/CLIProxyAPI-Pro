@@ -41,6 +41,8 @@ const (
 	accountInspectionMaxProviderConcurrency = 2
 	accountInspectionMaxRefreshConcurrency  = 2
 	accountInspectionWebSocketWriteTimeout  = 5 * time.Second
+	accountInspectionWebSocketPongWait      = 60 * time.Second
+	accountInspectionWebSocketPingPeriod    = 54 * time.Second
 	accountInspectionProgressBroadcastGap   = 500 * time.Millisecond
 )
 
@@ -436,20 +438,39 @@ func (s *accountInspectionScheduler) logStreamMessageLocked(entry accountInspect
 	return accountInspectionLogStreamMessage{Type: accountInspectionStreamLog, Schedule: s.schedule, Status: s.statusEventLocked(), Log: &entry}
 }
 
-func (s *accountInspectionScheduler) broadcastStatusLocked(snapshot bool) {
-	s.broadcastLocked(s.statusStreamMessageLocked(snapshot))
+type accountInspectionBroadcast struct {
+	subscribers []chan accountInspectionLogStreamMessage
+	message     accountInspectionLogStreamMessage
 }
 
-func (s *accountInspectionScheduler) broadcastLogLocked(entry accountInspectionLogEntry) {
-	s.broadcastLocked(s.logStreamMessageLocked(entry))
-}
-
-func (s *accountInspectionScheduler) broadcastLocked(message accountInspectionLogStreamMessage) {
-	for subscriber := range s.subscribers {
+func (broadcast accountInspectionBroadcast) send() {
+	for _, subscriber := range broadcast.subscribers {
 		select {
-		case subscriber <- message:
+		case subscriber <- broadcast.message:
 		default:
 		}
+	}
+}
+
+func (s *accountInspectionScheduler) subscribersLocked() []chan accountInspectionLogStreamMessage {
+	subscribers := make([]chan accountInspectionLogStreamMessage, 0, len(s.subscribers))
+	for subscriber := range s.subscribers {
+		subscribers = append(subscribers, subscriber)
+	}
+	return subscribers
+}
+
+func (s *accountInspectionScheduler) statusBroadcastLocked(snapshot bool) accountInspectionBroadcast {
+	return accountInspectionBroadcast{
+		subscribers: s.subscribersLocked(),
+		message:     s.statusStreamMessageLocked(snapshot),
+	}
+}
+
+func (s *accountInspectionScheduler) logBroadcastLocked(entry accountInspectionLogEntry) accountInspectionBroadcast {
+	return accountInspectionBroadcast{
+		subscribers: s.subscribersLocked(),
+		message:     s.logStreamMessageLocked(entry),
 	}
 }
 
@@ -463,10 +484,7 @@ func (s *accountInspectionScheduler) subscribeLogs() (chan accountInspectionLogS
 
 func (s *accountInspectionScheduler) unsubscribeLogs(subscriber chan accountInspectionLogStreamMessage) {
 	s.mu.Lock()
-	if _, ok := s.subscribers[subscriber]; ok {
-		delete(s.subscribers, subscriber)
-		close(subscriber)
-	}
+	delete(s.subscribers, subscriber)
 	s.mu.Unlock()
 }
 
@@ -583,14 +601,15 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 }
 
 func (s *accountInspectionScheduler) appendLog(level string, message string) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
 	entry := accountInspectionLogEntry{Time: time.Now().UnixMilli(), Level: level, Message: message}
+	s.mu.Lock()
 	s.status.Logs = append(s.status.Logs, entry)
 	if len(s.status.Logs) > 200 {
 		s.status.Logs = s.status.Logs[len(s.status.Logs)-200:]
 	}
-	s.broadcastLogLocked(entry)
+	broadcast := s.logBroadcastLocked(entry)
+	s.mu.Unlock()
+	broadcast.send()
 }
 
 func (s *accountInspectionScheduler) updateProgress(total int, completed int, inFlight int, force bool) {
@@ -608,11 +627,13 @@ func (s *accountInspectionScheduler) updateProgress(total int, completed int, in
 	}
 	s.status.Progress = next
 	shouldBroadcast := force || completed == total || now-s.lastProgressBroadcastAt >= accountInspectionProgressBroadcastGap.Milliseconds()
+	var broadcast accountInspectionBroadcast
 	if shouldBroadcast {
 		s.lastProgressBroadcastAt = now
-		s.broadcastStatusLocked(false)
+		broadcast = s.statusBroadcastLocked(false)
 	}
 	s.mu.Unlock()
+	broadcast.send()
 }
 
 func (s *accountInspectionScheduler) waitIfPaused(ctx context.Context) error {
@@ -628,33 +649,39 @@ func (s *accountInspectionScheduler) waitIfPaused(ctx context.Context) error {
 }
 
 func (s *accountInspectionScheduler) pauseRun() {
+	var broadcast accountInspectionBroadcast
 	s.mu.Lock()
 	if s.isRunningLocked() && !s.isStoppingLocked() {
 		s.setRunStateLocked(accountInspectionStatePaused)
-		s.broadcastStatusLocked(false)
+		broadcast = s.statusBroadcastLocked(false)
 	}
 	s.mu.Unlock()
+	broadcast.send()
 }
 
 func (s *accountInspectionScheduler) resumeRun() {
+	var broadcast accountInspectionBroadcast
 	s.mu.Lock()
 	if s.isRunningLocked() && s.isPausedLocked() {
 		s.setRunStateLocked(accountInspectionStateRunning)
-		s.broadcastStatusLocked(false)
+		broadcast = s.statusBroadcastLocked(false)
 		s.pause.Broadcast()
 	}
 	s.mu.Unlock()
+	broadcast.send()
 }
 
 func (s *accountInspectionScheduler) stopRun() {
+	var broadcast accountInspectionBroadcast
 	s.mu.Lock()
 	cancel := s.cancel
 	if s.isRunningLocked() {
 		s.setRunStateLocked(accountInspectionStateStopping)
-		s.broadcastStatusLocked(false)
+		broadcast = s.statusBroadcastLocked(false)
 		s.pause.Broadcast()
 	}
 	s.mu.Unlock()
+	broadcast.send()
 	if cancel != nil {
 		cancel()
 	}
@@ -677,7 +704,6 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 	}
 
 	s.mu.Lock()
-	defer s.mu.Unlock()
 	s.setRunStateLocked(state)
 	s.status.LastFinishedAt = finishedAt
 	s.status.Summary = summary
@@ -691,13 +717,15 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 		s.status.LastError = ""
 	}
 	s.cancel = nil
-	s.broadcastStatusLocked(true)
+	broadcast := s.statusBroadcastLocked(true)
 	if s.schedule.Enabled && !manual {
 		s.schedule.NextRunAt = time.Now().Add(time.Duration(s.schedule.IntervalMinutes) * time.Minute).UnixMilli()
 		if err := s.saveLocked(); err != nil {
 			log.WithError(err).Warn("failed to save next account inspection run time")
 		}
 	}
+	s.mu.Unlock()
+	broadcast.send()
 }
 
 func (s *accountInspectionScheduler) streamLogs(c *gin.Context) {
@@ -715,8 +743,14 @@ func (s *accountInspectionScheduler) streamLogs(c *gin.Context) {
 	}
 	defer conn.Close()
 
+	done := make(chan struct{})
+	go readAccountInspectionWebSocket(conn, done)
+
 	subscriber, snapshot := s.subscribeLogs()
 	defer s.unsubscribeLogs(subscriber)
+
+	pingTicker := time.NewTicker(accountInspectionWebSocketPingPeriod)
+	defer pingTicker.Stop()
 
 	if err := writeAccountInspectionWebSocketMessage(conn, snapshot); err != nil {
 		return
@@ -725,6 +759,12 @@ func (s *accountInspectionScheduler) streamLogs(c *gin.Context) {
 		select {
 		case <-c.Request.Context().Done():
 			return
+		case <-done:
+			return
+		case <-pingTicker.C:
+			if err := writeAccountInspectionWebSocketPing(conn); err != nil {
+				return
+			}
 		case message, ok := <-subscriber:
 			if !ok {
 				return
@@ -736,9 +776,58 @@ func (s *accountInspectionScheduler) streamLogs(c *gin.Context) {
 	}
 }
 
+func readAccountInspectionWebSocket(conn *websocket.Conn, done chan<- struct{}) {
+	defer close(done)
+	_ = conn.SetReadDeadline(time.Now().Add(accountInspectionWebSocketPongWait))
+	conn.SetPongHandler(func(string) error {
+		return conn.SetReadDeadline(time.Now().Add(accountInspectionWebSocketPongWait))
+	})
+	for {
+		if _, _, err := conn.NextReader(); err != nil {
+			return
+		}
+	}
+}
+
+func writeAccountInspectionWebSocketPing(conn *websocket.Conn) error {
+	_ = conn.SetWriteDeadline(time.Now().Add(accountInspectionWebSocketWriteTimeout))
+	return conn.WriteMessage(websocket.PingMessage, nil)
+}
+
 func writeAccountInspectionWebSocketMessage(conn *websocket.Conn, message accountInspectionLogStreamMessage) error {
 	_ = conn.SetWriteDeadline(time.Now().Add(accountInspectionWebSocketWriteTimeout))
 	return conn.WriteJSON(message)
+}
+
+func runAccountInspectionWorkers(total int, workers int, beforeNext func() bool, run func(index int) bool) {
+	if workers <= 0 {
+		workers = 1
+	}
+	cursor := 0
+	var cursorMu sync.Mutex
+	var wg sync.WaitGroup
+	for i := 0; i < workers && i < total; i++ {
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			for {
+				if beforeNext != nil && !beforeNext() {
+					return
+				}
+				cursorMu.Lock()
+				index := cursor
+				cursor++
+				cursorMu.Unlock()
+				if index >= total {
+					return
+				}
+				if !run(index) {
+					return
+				}
+			}
+		}()
+	}
+	wg.Wait()
 }
 
 func (s *accountInspectionScheduler) executeInspection(ctx context.Context, settings accountInspectionSettings) ([]accountInspectionResult, accountInspectionSummary, error) {
@@ -768,18 +857,11 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 	s.appendLog("info", fmt.Sprintf("巡检集合 %d 个账号，本次探测 %d 个账号", probeSetCount, len(accounts)))
 
 	results := make([]accountInspectionResult, len(accounts))
-	workers := settings.Workers
-	if workers <= 0 {
-		workers = 1
-	}
 	providerLimiters := accountInspectionProviderLimiters()
 	refreshLimiter := make(chan struct{}, accountInspectionMaxRefreshConcurrency)
-	cursor := 0
 	completed := 0
 	inFlight := 0
 	var progressMu sync.Mutex
-	var cursorMu sync.Mutex
-	var wg sync.WaitGroup
 	var runErr error
 	var runErrOnce sync.Once
 	setRunErr := func(err error) {
@@ -789,48 +871,42 @@ func (s *accountInspectionScheduler) executeInspection(ctx context.Context, sett
 		runErrOnce.Do(func() { runErr = err })
 	}
 	s.updateProgress(len(accounts), 0, 0, true)
-	for i := 0; i < workers && i < len(accounts); i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				if err := s.waitIfPaused(ctx); err != nil {
-					setRunErr(err)
-					return
-				}
-				cursorMu.Lock()
-				index := cursor
-				cursor++
-				cursorMu.Unlock()
-				if index >= len(accounts) {
-					return
-				}
-				account := accounts[index]
-				limiter := providerLimiters[account.Provider]
-				if limiter == nil {
-					limiter = make(chan struct{}, accountInspectionMaxProviderConcurrency)
-				}
-				select {
-				case limiter <- struct{}{}:
-				case <-ctx.Done():
-					setRunErr(ctx.Err())
-					return
-				}
-				progressMu.Lock()
-				inFlight++
-				s.updateProgress(len(accounts), completed, inFlight, false)
-				progressMu.Unlock()
-				results[index] = s.inspectAccount(ctx, account, settings, refreshLimiter)
-				<-limiter
-				progressMu.Lock()
-				inFlight--
-				completed++
-				s.updateProgress(len(accounts), completed, inFlight, false)
-				progressMu.Unlock()
+	runAccountInspectionWorkers(
+		len(accounts),
+		settings.Workers,
+		func() bool {
+			if err := s.waitIfPaused(ctx); err != nil {
+				setRunErr(err)
+				return false
 			}
-		}()
-	}
-	wg.Wait()
+			return true
+		},
+		func(index int) bool {
+			account := accounts[index]
+			limiter := providerLimiters[account.Provider]
+			if limiter == nil {
+				limiter = make(chan struct{}, accountInspectionMaxProviderConcurrency)
+			}
+			select {
+			case limiter <- struct{}{}:
+			case <-ctx.Done():
+				setRunErr(ctx.Err())
+				return false
+			}
+			progressMu.Lock()
+			inFlight++
+			s.updateProgress(len(accounts), completed, inFlight, false)
+			progressMu.Unlock()
+			results[index] = s.inspectAccount(ctx, account, settings, refreshLimiter)
+			<-limiter
+			progressMu.Lock()
+			inFlight--
+			completed++
+			s.updateProgress(len(accounts), completed, inFlight, false)
+			progressMu.Unlock()
+			return true
+		},
+	)
 	if runErr != nil {
 		partial := completedInspectionResults(results)
 		return partial, summarizeAccountInspection(len(liveAuths), probeSetCount, accounts, partial), runErr
@@ -912,6 +988,10 @@ func (s *accountInspectionScheduler) authFileExists(auth *coreauth.Auth, existin
 	return exists
 }
 
+func accountInspectionKey(fileName string, authIndex string) string {
+	return fileName + "::" + firstNonEmptyStringValue(authIndex, "-")
+}
+
 func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
 	if auth == nil {
 		return accountInspectionAccount{}
@@ -930,7 +1010,7 @@ func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
 	}
 	return accountInspectionAccount{
 		Auth:        auth,
-		Key:         fileName + "::" + firstNonEmptyStringValue(auth.Index, "-"),
+		Key:         accountInspectionKey(fileName, auth.Index),
 		Provider:    provider,
 		FileName:    fileName,
 		DisplayName: displayName,
@@ -1491,69 +1571,45 @@ func (item accountInspectionActionItem) toResult() accountInspectionResult {
 	}
 }
 
-func actionItemsToResults(items []accountInspectionActionItem) []accountInspectionResult {
-	results := make([]accountInspectionResult, 0, len(items))
-	for _, item := range items {
-		results = append(results, item.toResult())
-	}
-	return results
-}
-
 func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, items []accountInspectionActionItem) []accountInspectionActionOutcome {
-	executableItems := dedupeExecutionItems(actionItemsToResults(items))
+	executableItems := dedupeExecutionActionItems(items)
 	outcomes := make([]accountInspectionActionOutcome, len(executableItems))
-	cursor := 0
-	workers := accountInspectionMaxDeleteWorkers
-	if workers <= 0 {
-		workers = 1
-	}
-	var mu sync.Mutex
-	var wg sync.WaitGroup
-	for i := 0; i < workers && i < len(executableItems); i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				mu.Lock()
-				index := cursor
-				cursor++
-				mu.Unlock()
-				if index >= len(executableItems) {
-					return
-				}
-				item := executableItems[index]
-				action := item.Action
-				outcome := accountInspectionActionOutcome{Action: action, FileName: item.FileName, DisplayName: item.DisplayName, Email: item.Email, Name: item.Name, Provider: item.Provider, AuthIndex: item.AuthIndex}
-				if err := s.executeAction(ctx, item, action); err != nil {
-					outcome.Error = err.Error()
-					s.appendLog("error", fmt.Sprintf("%s -> %s 执行失败：%s", resultIdentity(item), action, err.Error()))
-				} else {
-					outcome.Success = true
-					s.appendLog("success", fmt.Sprintf("%s %s 成功", resultIdentity(item), action))
-				}
-				outcomes[index] = outcome
-			}
-		}()
-	}
-	wg.Wait()
+	runAccountInspectionWorkers(len(executableItems), accountInspectionMaxDeleteWorkers, nil, func(index int) bool {
+		item := executableItems[index]
+		result := item.toResult()
+		action := item.Action
+		outcome := accountInspectionActionOutcome{Action: action, FileName: item.FileName, DisplayName: item.DisplayName, Email: item.Email, Name: item.Name, Provider: item.Provider, AuthIndex: item.AuthIndex}
+		if err := s.executeAction(ctx, result, action); err != nil {
+			outcome.Error = err.Error()
+			s.appendLog("error", fmt.Sprintf("%s -> %s 执行失败：%s", resultIdentity(result), action, err.Error()))
+		} else {
+			outcome.Success = true
+			s.appendLog("success", fmt.Sprintf("%s %s 成功", resultIdentity(result), action))
+		}
+		outcomes[index] = outcome
+		return true
+	})
 	return outcomes
 }
 
-func dedupeExecutionItems(items []accountInspectionResult) []accountInspectionResult {
+func dedupeExecutionActionItems(items []accountInspectionActionItem) []accountInspectionActionItem {
 	seen := make(map[string]struct{})
-	out := make([]accountInspectionResult, 0, len(items))
+	out := make([]accountInspectionActionItem, 0, len(items))
 	for _, item := range items {
 		if item.Action == accountInspectionActionKeep || item.Action == "" || item.FileName == "" {
 			continue
 		}
 		key := item.Key
 		if key == "" {
-			key = item.FileName + "::" + firstNonEmptyStringValue(item.AuthIndex, "-")
+			key = accountInspectionKey(item.FileName, item.AuthIndex)
 		}
 		if _, ok := seen[key]; ok {
 			continue
 		}
 		seen[key] = struct{}{}
+		if item.Key == "" {
+			item.Key = key
+		}
 		out = append(out, item)
 	}
 	return out
@@ -1577,54 +1633,36 @@ func (s *accountInspectionScheduler) applyAutomaticActions(ctx context.Context, 
 	if workers <= 0 {
 		workers = settings.Workers
 	}
-	if workers <= 0 {
-		workers = 1
-	}
 	deletedFiles := make(map[string]struct{})
-	cursor := 0
 	var mu sync.Mutex
-	var wg sync.WaitGroup
-	for i := 0; i < workers && i < len(results); i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
-			for {
-				mu.Lock()
-				index := cursor
-				cursor++
+	runAccountInspectionWorkers(len(results), workers, nil, func(index int) bool {
+		action := autoActionForResult(results[index], settings)
+		if action == "" {
+			return true
+		}
+		if action == accountInspectionActionDelete {
+			mu.Lock()
+			if _, ok := deletedFiles[results[index].FileName]; ok {
+				results[index].ExecuteError = "auth file already deleted in this inspection run"
 				mu.Unlock()
-				if index >= len(results) {
-					return
-				}
-				action := autoActionForResult(results[index], settings)
-				if action == "" {
-					continue
-				}
-				if action == accountInspectionActionDelete {
-					mu.Lock()
-					if _, ok := deletedFiles[results[index].FileName]; ok {
-						results[index].ExecuteError = "auth file already deleted in this inspection run"
-						mu.Unlock()
-						continue
-					}
-					deletedFiles[results[index].FileName] = struct{}{}
-					mu.Unlock()
-				}
-				err := s.executeAction(ctx, results[index], action)
-				mu.Lock()
-				if err != nil {
-					results[index].ExecuteError = err.Error()
-					appendLog("error", fmt.Sprintf("%s -> %s 执行失败：%s", resultIdentity(results[index]), action, err.Error()))
-				} else {
-					results[index].Executed = true
-					results[index].Action = action
-					appendLog("success", fmt.Sprintf("%s %s 成功", resultIdentity(results[index]), action))
-				}
-				mu.Unlock()
+				return true
 			}
-		}()
-	}
-	wg.Wait()
+			deletedFiles[results[index].FileName] = struct{}{}
+			mu.Unlock()
+		}
+		err := s.executeAction(ctx, results[index], action)
+		mu.Lock()
+		if err != nil {
+			results[index].ExecuteError = err.Error()
+			appendLog("error", fmt.Sprintf("%s -> %s 执行失败：%s", resultIdentity(results[index]), action, err.Error()))
+		} else {
+			results[index].Executed = true
+			results[index].Action = action
+			appendLog("success", fmt.Sprintf("%s %s 成功", resultIdentity(results[index]), action))
+		}
+		mu.Unlock()
+		return true
+	})
 }
 
 func autoActionForResult(result accountInspectionResult, settings accountInspectionSettings) accountInspectionAction {

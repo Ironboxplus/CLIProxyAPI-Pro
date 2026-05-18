@@ -18,6 +18,18 @@ export interface SourceInfoMap {
   bySource: Map<string, SourceInfoEntry | null>;
 }
 
+const PROVIDER_DISPLAY_LABELS: Record<string, string> = {
+  antigravity: 'Antigravity',
+  claude: 'Claude',
+  codex: 'Codex',
+  gemini: 'Gemini',
+  'gemini-cli': 'Gemini CLI',
+  kimi: 'Kimi',
+  vertex: 'Vertex',
+};
+
+export const resolveProviderDisplayLabel = (provider: string) => PROVIDER_DISPLAY_LABELS[provider] ?? provider;
+
 const buildProviderIdentityKey = (type: string, index: number) => `${type}:${index}`;
 
 const registerIdentity = (
@@ -65,11 +77,11 @@ export function buildSourceInfoMap(input: SourceInfoMapInput): SourceInfoMap {
     type: string;
     label: string;
   }> = [
-    { items: input.geminiApiKeys || [], type: 'gemini', label: 'Gemini' },
-    { items: input.claudeApiKeys || [], type: 'claude', label: 'Claude' },
-    { items: input.codexApiKeys || [], type: 'codex', label: 'Codex' },
-    { items: input.antigravityApiKeys || [], type: 'antigravity', label: 'Antigravity' },
-    { items: input.vertexApiKeys || [], type: 'vertex', label: 'Vertex' },
+    { items: input.geminiApiKeys || [], type: 'gemini', label: resolveProviderDisplayLabel('gemini') },
+    { items: input.claudeApiKeys || [], type: 'claude', label: resolveProviderDisplayLabel('claude') },
+    { items: input.codexApiKeys || [], type: 'codex', label: resolveProviderDisplayLabel('codex') },
+    { items: input.antigravityApiKeys || [], type: 'antigravity', label: resolveProviderDisplayLabel('antigravity') },
+    { items: input.vertexApiKeys || [], type: 'vertex', label: resolveProviderDisplayLabel('vertex') },
   ];
 
   providers.forEach(({ items, type, label }) => {

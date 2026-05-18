@@ -178,7 +178,17 @@ export interface AccountInspectionExecutionResult {
   refreshError: string;
 }
 
-const ALL_INSPECTION_PROVIDER_TYPE = 'all';
+export const ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE = 'all';
+
+export const ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS = [
+  'antigravity',
+  'claude',
+  'codex',
+  'gemini-cli',
+  'kimi',
+] as const;
+
+export type AccountInspectionSupportedProvider = typeof ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS[number];
 
 export const ACCOUNT_INSPECTION_SETTING_LIMITS = {
   workers: { min: 1, max: 8 },
@@ -193,7 +203,7 @@ export const ACCOUNT_INSPECTION_SETTING_LIMITS = {
 export const ACCOUNT_INSPECTION_SETTINGS_STORAGE_KEY = 'cli-proxy-account-inspection-settings-v1';
 
 export const DEFAULT_ACCOUNT_INSPECTION_SETTINGS: AccountInspectionConfigurableSettings = {
-  targetType: ALL_INSPECTION_PROVIDER_TYPE,
+  targetType: ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE,
   workers: 4,
   deleteWorkers: 4,
   timeout: 15000,

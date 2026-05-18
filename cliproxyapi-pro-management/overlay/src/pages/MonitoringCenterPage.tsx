@@ -67,17 +67,17 @@ type UsageMetricCard = {
 type RankingMetric = 'requests' | 'tokens' | 'cost';
 type AccountSortMetric = 'recent' | RankingMetric;
 
-const RANKING_METRIC_OPTIONS: Array<{ value: RankingMetric; label: string }> = [
-  { value: 'requests', label: '请求' },
-  { value: 'tokens', label: 'TOKEN' },
-  { value: 'cost', label: '金额' },
+const RANKING_METRIC_OPTIONS: Array<{ value: RankingMetric; labelKey: string }> = [
+  { value: 'requests', labelKey: 'monitoring.ranking_metric_requests' },
+  { value: 'tokens', labelKey: 'monitoring.ranking_metric_tokens' },
+  { value: 'cost', labelKey: 'monitoring.ranking_metric_cost' },
 ];
 
-const ACCOUNT_SORT_OPTIONS: Array<{ value: AccountSortMetric; label: string }> = [
-  { value: 'recent', label: '最近' },
-  { value: 'requests', label: '请求' },
-  { value: 'tokens', label: 'TOKEN' },
-  { value: 'cost', label: '金额' },
+const ACCOUNT_SORT_OPTIONS: Array<{ value: AccountSortMetric; labelKey: string }> = [
+  { value: 'recent', labelKey: 'monitoring.account_sort_recent' },
+  { value: 'requests', labelKey: 'monitoring.ranking_metric_requests' },
+  { value: 'tokens', labelKey: 'monitoring.ranking_metric_tokens' },
+  { value: 'cost', labelKey: 'monitoring.ranking_metric_cost' },
 ];
 
 const ACCOUNT_STATUS_BLOCK_COUNT = 20;
@@ -100,7 +100,7 @@ const getAccountStatusColor = (rate: number) => {
   return `rgb(${r}, ${g}, ${b})`;
 };
 
-const buildApiKeyFilterOptions = (rows: MonitoringEventRow[], allLabel = '全部密钥') => [
+const buildApiKeyFilterOptions = (rows: MonitoringEventRow[], allLabel: string) => [
   { value: 'all', label: allLabel },
   ...Array.from(
     new Map(
@@ -166,7 +166,7 @@ const getNextAccountStatusBlockIndex = (currentIndex: number, key: string, count
   return null;
 };
 
-const formatAccountOverviewScopeText = (rangeLabel: string) => `统计范围：${rangeLabel}`;
+const formatAccountOverviewScopeText = (rangeLabel: string, t: TFunction) => t('monitoring.account_scope_text', { range: rangeLabel });
 
 const buildAccountStatusRange = (rows: MonitoringEventRow[], range: MonitoringTimeRange, nowMs = Date.now()): AccountStatusRange => {
   if (range !== 'all') {
@@ -316,16 +316,16 @@ const getAccountSortValue = (row: MonitoringAccountRow, metric: AccountSortMetri
   return getRankingMetricValue(row, metric);
 };
 
-const getRankingMetricLabel = (metric: RankingMetric) => {
-  if (metric === 'cost') return '金额';
-  if (metric === 'tokens') return 'TOKEN';
-  return '请求';
+const getRankingMetricLabel = (metric: RankingMetric, t: TFunction) => {
+  if (metric === 'cost') return t('monitoring.ranking_metric_cost');
+  if (metric === 'tokens') return t('monitoring.ranking_metric_tokens');
+  return t('monitoring.ranking_metric_requests');
 };
 
-const getRankingSummaryLabel = (metric: RankingMetric) => {
-  if (metric === 'cost') return '总金额';
-  if (metric === 'tokens') return '总 TOKEN';
-  return '总调用';
+const getRankingSummaryLabel = (metric: RankingMetric, t: TFunction) => {
+  if (metric === 'cost') return t('monitoring.ranking_summary_cost');
+  if (metric === 'tokens') return t('monitoring.ranking_summary_tokens');
+  return t('monitoring.ranking_summary_calls');
 };
 
 const getRankingMetricTotalFromRows = (rows: MonitoringEventRow[], metric: RankingMetric) => {
@@ -349,12 +349,14 @@ const RankingMetricSwitch = ({
   value,
   onChange,
   disabledCost,
+  t,
 }: {
   value: RankingMetric;
   onChange: (value: RankingMetric) => void;
   disabledCost: boolean;
+  t: TFunction;
 }) => (
-  <div className={styles.rankingMetricSwitch} role="group" aria-label="排名分析维度">
+  <div className={styles.rankingMetricSwitch} role="group" aria-label={t('monitoring.ranking_metric_aria')}>
     {RANKING_METRIC_OPTIONS.map((option) => (
       <button
         key={option.value}
@@ -363,7 +365,7 @@ const RankingMetricSwitch = ({
         onClick={() => onChange(option.value)}
         disabled={option.value === 'cost' && disabledCost}
       >
-        {option.label}
+        {t(option.labelKey)}
       </button>
     ))}
   </div>
@@ -382,12 +384,12 @@ const buildAccountCardProviderText = (row: MonitoringAccountRow) => {
   return providers.length > 0 ? joinShort(providers, 2) : '-';
 };
 
-const sortAccountOverviewCardMetrics = (metrics: AccountSummaryMetric[]) => {
+const sortAccountOverviewCardMetrics = (metrics: AccountSummaryMetric[], t: TFunction) => {
   const labels: Record<string, string> = {
-    'total-tokens': '总计',
-    'input-tokens': '输入',
-    'output-tokens': '输出',
-    'cached-tokens': '缓存',
+    'total-tokens': t('monitoring.token_metric_total'),
+    'input-tokens': t('monitoring.token_metric_input'),
+    'output-tokens': t('monitoring.token_metric_output'),
+    'cached-tokens': t('monitoring.token_metric_cached'),
   };
   const order = ['total-tokens', 'input-tokens', 'output-tokens', 'cached-tokens'];
   return order
@@ -556,8 +558,8 @@ const formatDayLabel = (date: Date) => `${String(date.getMonth() + 1).padStart(2
 const formatShortDateTime = (date: Date) =>
   `${date.getMonth() + 1}/${date.getDate()} ${String(date.getHours()).padStart(2, '0')}:${String(date.getMinutes()).padStart(2, '0')}`;
 
-const buildUsageTrendRangeLabel = (range: MonitoringTimeRange) => {
-  if (range === 'all') return '全部保留日志';
+const buildUsageTrendRangeLabel = (range: MonitoringTimeRange, t: TFunction) => {
+  if (range === 'all') return t('monitoring.all_retained_logs');
 
   const now = new Date();
   const start = new Date(getRangeStartMs(range, now.getTime()));
@@ -875,11 +877,11 @@ function UsageTrendHeader({
   return (
     <div className={styles.usageTrendHeader}>
       <div className={styles.usageTrendCopy}>
-        <h2>使用趋势</h2>
-        <p>{`基于选定时间范围内 ${formatCompactNumber(totalCalls)} 条请求日志自动聚合。`}</p>
+        <h2>{t('monitoring.usage_stats_title')}</h2>
+        <p>{t('monitoring.usage_stats_desc', { value: formatCompactNumber(totalCalls) })}</p>
       </div>
       <button type="button" className={`${styles.rankingMetricButton} ${styles.usageTrendHideButton} ${styles.mobileHeaderHideButton}`} onClick={onHide}>
-        隐藏分析
+        {t('monitoring.hide_analysis')}
       </button>
       <div className={styles.usageTrendActions}>
         <div className={`${styles.rankingMetricSwitch} ${styles.timeRangeControl}`}>
@@ -899,11 +901,11 @@ function UsageTrendHeader({
           value={apiKeyFilter}
           options={apiKeyOptions}
           onChange={onApiKeyFilterChange}
-          ariaLabel="按 API 密钥筛选使用趋势"
+          ariaLabel={t('monitoring.filter_usage_trend_api_key')}
           fullWidth={false}
         />
         <button type="button" className={`${styles.rankingMetricButton} ${styles.usageTrendHideButton}`} onClick={onHide}>
-          隐藏分析
+          {t('monitoring.hide_analysis')}
         </button>
       </div>
     </div>
@@ -941,10 +943,12 @@ function UsageTrendPanel({
   points,
   hasPrices,
   emptyText,
+  t,
 }: {
   points: TrendPoint[];
   hasPrices: boolean;
   emptyText: string;
+  t: TFunction;
 }) {
   const chartPoints = points.slice(-30);
   const [hoveredIndex, setHoveredIndex] = useState<number | null>(null);
@@ -970,7 +974,7 @@ function UsageTrendPanel({
   const series = [
     {
       key: 'tokens',
-      label: 'Token',
+      label: t('monitoring.ranking_metric_tokens'),
       color: '#7c3aed',
       axis: 'tokens',
       getValue: (point: TrendPoint) => point.tokens,
@@ -978,7 +982,7 @@ function UsageTrendPanel({
     },
     {
       key: 'requests',
-      label: '请求',
+      label: t('monitoring.ranking_metric_requests'),
       color: '#2563eb',
       axis: 'requests',
       getValue: (point: TrendPoint) => point.requests,
@@ -986,7 +990,7 @@ function UsageTrendPanel({
     },
     {
       key: 'cost',
-      label: '费用',
+      label: t('monitoring.ranking_metric_cost'),
       color: '#047857',
       axis: 'cost',
       getValue: (point: TrendPoint) => point.cost,
@@ -1008,16 +1012,16 @@ function UsageTrendPanel({
     null
   );
   const summaryItems = [
-    { key: 'requests', label: '总请求', value: formatCompactNumber(totals.requests), color: '#2563eb' },
-    { key: 'tokens', label: '总 Token', value: formatCompactNumber(totals.tokens), color: '#7c3aed' },
-    ...(hasPrices ? [{ key: 'cost', label: '总费用', value: formatUsd(totals.cost), color: '#059669' }] : []),
-    { key: 'peak', label: '峰值时段', value: peakTokenPoint?.label ?? '--', color: '#f97316' },
+    { key: 'requests', label: t('monitoring.total_requests_label'), value: formatCompactNumber(totals.requests), color: '#2563eb' },
+    { key: 'tokens', label: t('monitoring.total_tokens_label'), value: formatCompactNumber(totals.tokens), color: '#7c3aed' },
+    ...(hasPrices ? [{ key: 'cost', label: t('monitoring.total_cost_label'), value: formatUsd(totals.cost), color: '#059669' }] : []),
+    { key: 'peak', label: t('monitoring.peak_period'), value: peakTokenPoint?.label ?? '--', color: '#f97316' },
   ];
   const trendMinutes = Math.max(chartPoints.length * 60, 1);
   const headerStats = [
     { key: 'rpm', label: 'RPM', value: (totals.requests / trendMinutes).toFixed(2) },
     { key: 'tpm', label: 'TPM', value: formatCompactNumber(totals.tokens / trendMinutes) },
-    { key: 'errorRate', label: '错误率', value: formatPercent(totals.requests > 0 ? totals.failures / totals.requests : 0) },
+    { key: 'errorRate', label: t('monitoring.error_rate'), value: formatPercent(totals.requests > 0 ? totals.failures / totals.requests : 0) },
   ];
   const axisTicks = [0, 0.25, 0.5, 0.75, 1];
   const getAxisMax = (axis: typeof series[number]['axis']) => {
@@ -1075,8 +1079,8 @@ function UsageTrendPanel({
     <Card className={`${styles.usageTrendChartCard} ${styles.usageTrendLineCard}`}>
       <div className={styles.trendCardHeader}>
         <div>
-          <h3>用量趋势</h3>
-          <p>基于选定范围的相对峰值变化，悬停查看实际数值。</p>
+          <h3>{t('monitoring.usage_trend_chart_title')}</h3>
+          <p>{t('monitoring.usage_trend_chart_desc')}</p>
         </div>
         <div className={styles.trendHeaderStats}>
           {headerStats.map((item) => (
@@ -1097,7 +1101,7 @@ function UsageTrendPanel({
               </div>
             ))}
           </div>
-          <svg ref={svgRef} className={styles.usageTrendSvg} viewBox={`0 0 ${chartViewBoxWidth} ${chartViewBoxHeight}`} role="img" aria-label="用量趋势图">
+          <svg ref={svgRef} className={styles.usageTrendSvg} viewBox={`0 0 ${chartViewBoxWidth} ${chartViewBoxHeight}`} role="img" aria-label={t('monitoring.usage_trend_chart_aria')}>
             <defs>
               <linearGradient id="usageTrendTokensFill" x1="0" x2="0" y1="0" y2="1">
                 <stop offset="5%" stopColor="#7c3aed" stopOpacity="0.24" />
@@ -1210,10 +1214,12 @@ function TokenDistributionPanel({
   points,
   emptyText,
   hasPrices,
+  t,
 }: {
   points: TokenDistributionPoint[];
   emptyText: string;
   hasPrices: boolean;
+  t: TFunction;
 }) {
   const totals = points.reduce(
     (sum, point) => ({
@@ -1233,12 +1239,12 @@ function TokenDistributionPanel({
   const rows = [
     { key: 'rpm', label: 'RPM', value: rpm, displayValue: rpm.toFixed(2), base: 0, accent: 'Purple', showShare: false },
     { key: 'tpm', label: 'TPM', value: tpm, displayValue: formatCompactNumber(tpm), base: 0, accent: 'Blue', showShare: false },
-    { key: 'requests', label: '请求数', value: totals.requests, displayValue: formatCompactNumber(totals.requests), base: 0, accent: 'Cyan', showShare: false },
-    { key: 'total', label: '总 TOKEN', value: totals.totalTokens, displayValue: formatCompactNumber(totals.totalTokens), base: 0, accent: 'Green', showShare: false },
-    { key: 'input', label: '输入', value: totals.inputTokens, displayValue: formatCompactNumber(totals.inputTokens), base: totals.totalTokens, accent: 'Amber', showShare: true },
-    { key: 'output', label: '输出', value: totals.outputTokens, displayValue: formatCompactNumber(totals.outputTokens), base: totals.totalTokens, accent: 'Rose', showShare: true },
-    { key: 'reasoning', label: '推理', value: totals.reasoningTokens, displayValue: formatCompactNumber(totals.reasoningTokens), base: totals.totalTokens, accent: 'Indigo', showShare: true },
-    { key: 'cached', label: '缓存', value: totals.cachedTokens, displayValue: formatCompactNumber(totals.cachedTokens), base: totals.totalTokens, accent: 'Slate', showShare: true },
+    { key: 'requests', label: t('monitoring.request_count'), value: totals.requests, displayValue: formatCompactNumber(totals.requests), base: 0, accent: 'Cyan', showShare: false },
+    { key: 'total', label: t('monitoring.total_tokens_label'), value: totals.totalTokens, displayValue: formatCompactNumber(totals.totalTokens), base: 0, accent: 'Green', showShare: false },
+    { key: 'input', label: t('monitoring.token_metric_input'), value: totals.inputTokens, displayValue: formatCompactNumber(totals.inputTokens), base: totals.totalTokens, accent: 'Amber', showShare: true },
+    { key: 'output', label: t('monitoring.token_metric_output'), value: totals.outputTokens, displayValue: formatCompactNumber(totals.outputTokens), base: totals.totalTokens, accent: 'Rose', showShare: true },
+    { key: 'reasoning', label: t('monitoring.token_metric_reasoning'), value: totals.reasoningTokens, displayValue: formatCompactNumber(totals.reasoningTokens), base: totals.totalTokens, accent: 'Indigo', showShare: true },
+    { key: 'cached', label: t('monitoring.token_metric_cached'), value: totals.cachedTokens, displayValue: formatCompactNumber(totals.cachedTokens), base: totals.totalTokens, accent: 'Slate', showShare: true },
   ];
   const hasData = rows.some((row) => row.value > 0);
 
@@ -1246,11 +1252,11 @@ function TokenDistributionPanel({
     <Card className={`${styles.usageTrendChartCard} ${styles.tokenDistributionCard}`}>
       <div className={`${styles.trendCardHeader} ${styles.tokenDistributionHeader}`}>
         <div>
-          <h3>Token 统计</h3>
-          <p>按请求规模和消耗类型查看 Token 分布。</p>
+          <h3>{t('monitoring.token_stats_title')}</h3>
+          <p>{t('monitoring.token_stats_desc')}</p>
         </div>
         <div className={styles.tokenCostBadge}>
-          <span>Token 花费</span>
+          <span>{t('monitoring.token_cost')}</span>
           <strong>{hasPrices ? formatUsd(totals.totalCost) : '--'}</strong>
         </div>
       </div>
@@ -1290,6 +1296,7 @@ function ModelStatsPanel({
   onMetricChange,
   emptyText,
   hasPrices,
+  t,
 }: {
   title: string;
   subtitle: string;
@@ -1299,9 +1306,10 @@ function ModelStatsPanel({
   onMetricChange: (metric: RankingMetric) => void;
   emptyText: string;
   hasPrices: boolean;
+  t: TFunction;
 }) {
   const shareBase = metricTotal > 0 ? metricTotal : rows.reduce((sum, row) => sum + getRankingMetricValue(row, metric), 0);
-  const shareModeLabel = `按${getRankingMetricLabel(metric)}`;
+  const shareModeLabel = t('monitoring.share_by_metric', { metric: getRankingMetricLabel(metric, t) });
   const totalShareValue = formatRankingMetricValue(shareBase, metric, hasPrices);
   const legendRows = rows.slice(0, 5);
   const donutTooltipRows = rows
@@ -1336,7 +1344,7 @@ function ModelStatsPanel({
           <h3>{title}</h3>
           <p>{subtitle}</p>
         </div>
-        <RankingMetricSwitch value={metric} onChange={onMetricChange} disabledCost={!hasPrices} />
+        <RankingMetricSwitch value={metric} onChange={onMetricChange} disabledCost={!hasPrices} t={t} />
       </div>
       {rows.length > 0 ? (
         <div className={styles.modelStatsLayout}>
@@ -1352,9 +1360,9 @@ function ModelStatsPanel({
                       <span>{formatPercent(value)}</span>
                     </div>
                     <div className={styles.modelStatsMetaLine}>
-                      <span>{`${formatCompactNumber(row.totalCalls)} 请求`}</span>
-                      <span>{`${formatCompactNumber(row.totalTokens)} Token`}</span>
-                      <span>{`${formatCompactNumber(row.failureCalls)} 错误`}</span>
+                      <span>{`${formatCompactNumber(row.totalCalls)} ${t('monitoring.ranking_metric_requests')}`}</span>
+                      <span>{`${formatCompactNumber(row.totalTokens)} ${t('monitoring.ranking_metric_tokens')}`}</span>
+                      <span>{`${formatCompactNumber(row.failureCalls)} ${t('monitoring.errors_label')}`}</span>
                       <span>{hasPrices ? formatUsd(row.totalCost) : '--'}</span>
                     </div>
                     <span
@@ -1369,16 +1377,16 @@ function ModelStatsPanel({
           </div>
           <aside className={styles.modelSharePanel}>
             <div className={styles.modelShareHeader}>
-              <strong>模型占比</strong>
+              <strong>{t('monitoring.model_share_title')}</strong>
               <span>{shareModeLabel}</span>
             </div>
             <div className={styles.donutChart} style={{ '--donut-bg': donutBackground } as CSSProperties}>
               <div className={styles.donutCenter}>
-                <span>{getRankingSummaryLabel(metric)}</span>
+                <span>{getRankingSummaryLabel(metric, t)}</span>
                 <strong>{totalShareValue}</strong>
               </div>
               <div className={styles.donutTooltip}>
-                <strong>{shareModeLabel}占比</strong>
+                <strong>{t('monitoring.share_tooltip_title', { metric: shareModeLabel })}</strong>
                 <div>
                   {donutTooltipRows.map((item, index) => (
                     <span key={item.row.id}>
@@ -1421,6 +1429,7 @@ function ApiKeyRankingPanel({
   onMetricChange,
   emptyText,
   hasPrices,
+  t,
 }: {
   title: string;
   subtitle: string;
@@ -1430,9 +1439,10 @@ function ApiKeyRankingPanel({
   onMetricChange: (metric: RankingMetric) => void;
   emptyText: string;
   hasPrices: boolean;
+  t: TFunction;
 }) {
   const shareBase = metricTotal > 0 ? metricTotal : rows.reduce((sum, row) => sum + getRankingMetricValue(row, metric), 0);
-  const summaryLabel = getRankingSummaryLabel(metric);
+  const summaryLabel = getRankingSummaryLabel(metric, t);
 
   return (
     <Card className={styles.apiKeyRankingCard}>
@@ -1441,14 +1451,14 @@ function ApiKeyRankingPanel({
           <h3>{title}</h3>
           <p>{subtitle}</p>
         </div>
-        <RankingMetricSwitch value={metric} onChange={onMetricChange} disabledCost={!hasPrices} />
+        <RankingMetricSwitch value={metric} onChange={onMetricChange} disabledCost={!hasPrices} t={t} />
       </div>
       <div className={styles.apiKeyRankingList}>
         {rows.length > 0 ? (
           <div className={styles.apiKeyRankingSummary}>
             <span>{summaryLabel}</span>
             <strong>{formatRankingMetricValue(shareBase, metric, hasPrices)}</strong>
-            <small>{`${rows.length} 个 API 密钥`}</small>
+            <small>{t('monitoring.api_keys_count', { count: rows.length })}</small>
           </div>
         ) : null}
         {rows.length > 0 ? (
@@ -1466,9 +1476,9 @@ function ApiKeyRankingPanel({
                     <span>{formatPercent(share)}</span>
                   </div>
                   <div className={styles.apiKeyRankingMetaLine}>
-                    <span>{`${formatCompactNumber(row.totalCalls)} 请求`}</span>
+                    <span>{`${formatCompactNumber(row.totalCalls)} ${t('monitoring.ranking_metric_requests')}`}</span>
                     <span>{`${formatCompactNumber(row.totalTokens)} Token`}</span>
-                    <span>{`${formatCompactNumber(row.failureCalls)} 错误`}</span>
+                    <span>{`${formatCompactNumber(row.failureCalls)} ${t('monitoring.errors_label')}`}</span>
                     <span>{hasPrices ? formatUsd(row.totalCost) : '--'}</span>
                   </div>
                   <span
@@ -1622,7 +1632,7 @@ function MonitoringHealthStatusBar({
         className={styles.monitoringStatusBlocks}
         ref={blocksRef}
         role="group"
-        aria-label="账号健康状态"
+        aria-label={t('monitoring.account_health_status')}
       >
         {statusData.blockDetails.map((detail, index) => {
           const isIdle = detail.rate === -1;
@@ -1715,21 +1725,21 @@ function AccountHealthStatusPanel({
   scopeText: string;
 }) {
   const healthMetrics = [
-    { key: 'total-calls', label: '总调用', value: formatCompactNumber(row.totalCalls) },
+    { key: 'total-calls', label: t('monitoring.total_calls'), value: formatCompactNumber(row.totalCalls) },
     {
       key: 'success-failure',
-      label: '成功/失败',
+      label: t('monitoring.success_failure'),
       value: <SuccessFailureValue success={row.successCalls} failure={row.failureCalls} />,
     },
-    { key: 'estimated-cost', label: '预估花费', value: hasPrices ? formatUsd(row.totalCost) : '--', className: styles.primaryText },
-    { key: 'success-rate', label: '成功率', value: formatPercent(row.successRate), className: getSuccessRateClassName(row.successRate) },
+    { key: 'estimated-cost', label: t('monitoring.estimated_cost'), value: hasPrices ? formatUsd(row.totalCost) : '--', className: styles.primaryText },
+    { key: 'success-rate', label: t('monitoring.success_rate'), value: formatPercent(row.successRate), className: getSuccessRateClassName(row.successRate) },
   ];
 
   return (
     <section className={styles.accountOverviewStatusSection}>
       <div className={styles.accountSectionHeader}>
-        <strong>健康状态</strong>
-        <span className={styles.accountSectionInfo} title="基于当前统计范围内的请求成功率与错误情况计算">
+        <strong>{t('monitoring.account_health_status')}</strong>
+        <span className={styles.accountSectionInfo} title={t('monitoring.account_health_status_hint')}>
           i
         </span>
       </div>
@@ -1747,7 +1757,7 @@ function AccountHealthStatusPanel({
   );
 }
 
-function AccountTokenMetricGrid({ metrics }: { metrics: AccountSummaryMetric[] }) {
+function AccountTokenMetricGrid({ metrics, t }: { metrics: AccountSummaryMetric[]; t: TFunction }) {
   const getTokenMetricToneClassName = (key: string) => {
     if (key === 'input-tokens') return styles.accountMetricIconInput;
     if (key === 'output-tokens') return styles.accountMetricIconOutput;
@@ -1758,7 +1768,7 @@ function AccountTokenMetricGrid({ metrics }: { metrics: AccountSummaryMetric[] }
   return (
     <section className={styles.accountTokenPanel}>
       <div className={styles.accountSectionHeader}>
-        <strong>Token 使用</strong>
+        <strong>{t('monitoring.token_usage')}</strong>
       </div>
       <div className={styles.accountOverviewMetricGrid}>
         {metrics.map((metric) => (
@@ -1804,10 +1814,10 @@ function AccountModelUsageList({
   return (
     <section className={styles.accountModelListPanel}>
       <div className={styles.accountSectionHeader}>
-        <strong>Top 模型</strong>
+        <strong>{t('monitoring.top_models')}</strong>
         {hasExtraModels ? (
           <button type="button" className={styles.accountModelViewAllButton} onClick={() => setShowAll((previous) => !previous)}>
-            {showAll ? '收起' : '查看全部'}
+            {showAll ? t('monitoring.collapse') : t('monitoring.view_all')}
           </button>
         ) : null}
       </div>
@@ -1827,10 +1837,10 @@ function AccountModelUsageList({
                 >
                   <span className={styles.accountModelName} title={model.model}>{model.model}</span>
                   <span className={styles.accountModelMetaLine}>
-                    <span className={styles.accountModelStat}><small>请求</small><strong>{formatCompactNumber(model.totalCalls)}</strong></span>
-                    <span className={styles.accountModelStat}><small>成功率</small><strong className={getSuccessRateClassName(model.successRate)}>{formatPercent(model.successRate)}</strong></span>
-                    <span className={styles.accountModelStat}><small>Token</small><strong>{formatCompactNumber(model.totalTokens)}</strong></span>
-                    <span className={styles.accountModelStat}><small>金额</small><strong>{hasPrices ? formatUsd(model.totalCost) : '--'}</strong></span>
+                    <span className={styles.accountModelStat}><small>{t('monitoring.ranking_metric_requests')}</small><strong>{formatCompactNumber(model.totalCalls)}</strong></span>
+                    <span className={styles.accountModelStat}><small>{t('monitoring.success_rate')}</small><strong className={getSuccessRateClassName(model.successRate)}>{formatPercent(model.successRate)}</strong></span>
+                    <span className={styles.accountModelStat}><small>{t('monitoring.ranking_metric_tokens')}</small><strong>{formatCompactNumber(model.totalTokens)}</strong></span>
+                    <span className={styles.accountModelStat}><small>{t('monitoring.ranking_metric_cost')}</small><strong>{hasPrices ? formatUsd(model.totalCost) : '--'}</strong></span>
                     <span className={styles.accountModelChevron} aria-hidden="true">{isModelExpanded ? <IconChevronDown size={14} /> : '›'}</span>
                   </span>
                 </button>
@@ -1847,7 +1857,7 @@ function AccountModelUsageList({
           })}
         </div>
       ) : (
-        <div className={styles.emptyBlockSmall}>暂无模型数据</div>
+        <div className={styles.emptyBlockSmall}>{t('monitoring.no_model_data')}</div>
       )}
     </section>
   );
@@ -1978,7 +1988,7 @@ function AccountOverviewCard({
   onRefreshQuota: () => void;
 }) {
   const summaryMetrics = buildAccountSummaryMetrics(row, hasPrices, locale, t);
-  const cardMetrics = sortAccountOverviewCardMetrics(summaryMetrics);
+  const cardMetrics = sortAccountOverviewCardMetrics(summaryMetrics, t);
   const tone = getAccountHealthTone(row);
   const latestRequestText = new Date(row.lastSeenAt).toLocaleString(locale);
   const accountLabel = buildAccountCardFileName(row, quotaEntries);
@@ -2011,18 +2021,18 @@ function AccountOverviewCard({
             </span>
           </button>
           <span className={`${styles.accountHealthBadge} ${styles[`accountHealthBadge${tone}`]}`}>
-            {tone === 'good' ? '健康' : tone === 'warn' ? '波动' : '异常'}
+            {tone === 'good' ? t('monitoring.health_good') : tone === 'warn' ? t('monitoring.health_warn') : t('monitoring.health_bad')}
           </span>
         </div>
         <div className={styles.accountMetaRow}>
           <span className={styles.accountOverviewCardTimestamp} title={providerText}>{providerText}</span>
           <span className={styles.accountMetaSeparator}>·</span>
-          <span className={styles.accountOverviewCardTimestamp}>{`最近请求时间: ${latestRequestText}`}</span>
+          <span className={styles.accountOverviewCardTimestamp}>{t('monitoring.latest_request_time_value', { value: latestRequestText })}</span>
         </div>
       </div>
 
       <AccountHealthStatusPanel row={row} hasPrices={hasPrices} locale={locale} t={t} statusData={statusData} scopeText={scopeText} />
-      <AccountTokenMetricGrid metrics={cardMetrics} />
+      <AccountTokenMetricGrid metrics={cardMetrics} t={t} />
 
       {isExpanded ? (
         <AccountExpandedDetails
@@ -2141,11 +2151,11 @@ function AccountStatsPanel({
     <>
       <div className={styles.usageTrendHeader}>
         <div className={styles.usageTrendCopy}>
-          <h2>账号统计</h2>
-          <p>按账号查看健康状态、Token 使用与近期请求活跃度。</p>
+          <h2>{t('monitoring.account_stats_title')}</h2>
+          <p>{t('monitoring.account_stats_desc')}</p>
         </div>
         <button type="button" className={`${styles.rankingMetricButton} ${styles.usageTrendHideButton} ${styles.mobileHeaderHideButton}`} onClick={onHide}>
-          隐藏分析
+          {t('monitoring.hide_analysis')}
         </button>
         <div className={styles.usageTrendActions}>
           <div className={`${styles.rankingMetricSwitch} ${styles.timeRangeControl}`}>
@@ -2161,7 +2171,7 @@ function AccountStatsPanel({
             ))}
           </div>
           <button type="button" className={`${styles.rankingMetricButton} ${styles.usageTrendHideButton}`} onClick={onHide}>
-            隐藏分析
+            {t('monitoring.hide_analysis')}
           </button>
         </div>
       </div>
@@ -2172,19 +2182,19 @@ function AccountStatsPanel({
             <Input
               value={accountSearch}
               onChange={(event: ChangeEvent<HTMLInputElement>) => setAccountSearch(event.target.value)}
-              placeholder="搜索账号"
+              placeholder={t('monitoring.search_account')}
               className={styles.accountStatsSearchInput}
               rightElement={<IconSearch size={14} />}
-              aria-label="搜索账号"
+              aria-label={t('monitoring.search_account')}
             />
             {providerOptions.length > 0 && (
               <select
                 value={accountProviderFilter}
                 onChange={(event) => setAccountProviderFilter(event.target.value)}
                 className={styles.accountStatsSelect}
-                aria-label="按提供商筛选"
+                aria-label={t('monitoring.filter_provider')}
               >
-                <option value="all">全部提供商</option>
+                <option value="all">{t('monitoring.filter_all_providers')}</option>
                 {providerOptions.map((p) => (
                   <option key={p} value={p}>{p}</option>
                 ))}
@@ -2194,12 +2204,12 @@ function AccountStatsPanel({
               value={accountHealthFilter}
               onChange={(event) => setAccountHealthFilter(event.target.value as 'all' | AccountHealthTone)}
               className={styles.accountStatsSelect}
-              aria-label="按健康状态筛选"
+              aria-label={t('monitoring.filter_health_status')}
             >
-              <option value="all">全部状态</option>
-              <option value="good">健康</option>
-              <option value="warn">警告</option>
-              <option value="bad">异常</option>
+              <option value="all">{t('monitoring.filter_all_statuses')}</option>
+              <option value="good">{t('monitoring.health_good')}</option>
+              <option value="warn">{t('monitoring.health_warn_filter')}</option>
+              <option value="bad">{t('monitoring.health_bad')}</option>
             </select>
             {hasActiveFilters && (
               <button
@@ -2207,11 +2217,11 @@ function AccountStatsPanel({
                 className={styles.accountStatsClearButton}
                 onClick={() => { setAccountSearch(''); setAccountProviderFilter('all'); setAccountHealthFilter('all'); }}
               >
-                清除
+                {t('monitoring.clear_filters')}
               </button>
             )}
           </div>
-          <div className={styles.rankingMetricSwitch} role="group" aria-label="账号排序方式">
+          <div className={styles.rankingMetricSwitch} role="group" aria-label={t('monitoring.account_sort_aria')}>
             {ACCOUNT_SORT_OPTIONS.map((option) => (
               <button
                 key={option.value}
@@ -2220,7 +2230,7 @@ function AccountStatsPanel({
                 onClick={() => onMetricChange(option.value)}
                 disabled={option.value === 'cost' && !hasPrices}
               >
-                {option.label}
+                {t(option.labelKey)}
               </button>
             ))}
           </div>
@@ -2240,7 +2250,7 @@ function AccountStatsPanel({
                     t={t}
                     isExpanded={Boolean(expandedAccounts[row.id])}
                     statusData={statusData}
-                    scopeText={formatAccountOverviewScopeText(rangeLabel)}
+                    scopeText={formatAccountOverviewScopeText(rangeLabel, t)}
                     quotaState={accountQuotaStates[row.account]}
                     quotaEntries={accountQuotaEntriesByAccount.get(row.account) ?? []}
                     onToggle={() => onToggleAccount(row.id, row.account)}
@@ -2256,7 +2266,7 @@ function AccountStatsPanel({
                   className={styles.accountCardPageButton}
                   disabled={safePageIndex === 0}
                   onClick={() => setCardPage((p) => Math.max(0, p - 1))}
-                  aria-label="上一页"
+                  aria-label={t('monitoring.previous_page')}
                 >
                   ‹
                 </button>
@@ -2268,7 +2278,7 @@ function AccountStatsPanel({
                   className={styles.accountCardPageButton}
                   disabled={safePageIndex >= totalPages - 1}
                   onClick={() => setCardPage((p) => Math.min(totalPages - 1, p + 1))}
-                  aria-label="下一页"
+                  aria-label={t('monitoring.next_page')}
                 >
                   ›
                 </button>
@@ -2276,7 +2286,7 @@ function AccountStatsPanel({
             )}
           </>
         ) : (
-          <div className={styles.emptyBlockSmall}>{hasActiveFilters ? '没有匹配筛选条件的账号' : emptyText}</div>
+          <div className={styles.emptyBlockSmall}>{hasActiveFilters ? t('monitoring.no_matching_accounts') : emptyText}</div>
         )}
       </Card>
     </>
@@ -2498,7 +2508,7 @@ export function MonitoringCenterPage() {
     [filteredRows, t]
   );
 
-  const apiKeyOptions = useMemo(() => buildApiKeyFilterOptions(filteredRows), [filteredRows]);
+  const apiKeyOptions = useMemo(() => buildApiKeyFilterOptions(filteredRows, t('monitoring.filter_all_api_keys')), [filteredRows, t]);
 
   const statusOptions = useMemo(
     () => [
@@ -2582,7 +2592,7 @@ export function MonitoringCenterPage() {
       0
     );
   }, [topStatsRows]);
-  const usageTrendApiKeyOptions = useMemo(() => buildApiKeyFilterOptions(trendStatsRows), [trendStatsRows]);
+  const usageTrendApiKeyOptions = useMemo(() => buildApiKeyFilterOptions(trendStatsRows, t('monitoring.filter_all_api_keys')), [trendStatsRows, t]);
   const usageTrendScopedRows = useMemo(
     () => usageTrendApiKey === 'all'
       ? trendStatsRows
@@ -2640,7 +2650,7 @@ export function MonitoringCenterPage() {
       )),
     [accountStatsMetric, accountStatsFilteredRows]
   );
-  const timeRangeLabel = useMemo(() => buildUsageTrendRangeLabel(timeRange), [timeRange]);
+  const timeRangeLabel = useMemo(() => buildUsageTrendRangeLabel(timeRange, t), [timeRange, t]);
   const realtimeLogRows = useMemo(() => buildRealtimeLogRows(scopedRows), [scopedRows]);
 
   const accountQuotaTargetsByAccount = useMemo(
@@ -2668,46 +2678,46 @@ export function MonitoringCenterPage() {
   const usageMetricCards: UsageMetricCard[] = [
     {
       key: 'traffic',
-      title: '流量',
-      label: '今日请求',
+      title: t('monitoring.traffic_title'),
+      label: t('monitoring.today_requests'),
       value: formatCompactNumber(todaySummary.totalCalls),
       accent: 'blue',
       footer: [
-        { label: '总请求', value: formatCompactNumber(topSummary.totalCalls) },
-        { label: '总成功率', value: formatPercent(topSummary.successRate) },
+        { label: t('monitoring.total_requests_label'), value: formatCompactNumber(topSummary.totalCalls) },
+        { label: t('monitoring.total_success_rate'), value: formatPercent(topSummary.successRate) },
       ],
     },
     {
       key: 'tokens',
       title: 'Token',
-      label: '今日 Token',
+      label: t('monitoring.today_tokens'),
       value: formatCompactNumber(todaySummary.totalTokens),
       accent: 'purple',
       footer: [
-        { label: '总 Token', value: formatCompactNumber(topSummary.totalTokens) },
-        { label: '输入/输出/推理', value: `${formatCompactNumber(topSummary.inputTokens)} / ${formatCompactNumber(topSummary.outputTokens)} / ${formatCompactNumber(topSummary.reasoningTokens)}` },
+        { label: t('monitoring.total_tokens_label'), value: formatCompactNumber(topSummary.totalTokens) },
+        { label: t('monitoring.input_output_reasoning'), value: `${formatCompactNumber(topSummary.inputTokens)} / ${formatCompactNumber(topSummary.outputTokens)} / ${formatCompactNumber(topSummary.reasoningTokens)}` },
       ],
     },
     {
       key: 'cache',
-      title: '缓存',
-      label: '今日缓存命中率',
+      title: t('monitoring.cache_title'),
+      label: t('monitoring.today_cache_hit_rate'),
       value: formatPercent(todaySummary.inputTokens > 0 ? todaySummary.cachedTokens / todaySummary.inputTokens : 0),
       accent: 'green',
       footer: [
-        { label: '今日缓存 Token', value: formatCompactNumber(todaySummary.cachedTokens) },
-        { label: '总缓存命中', value: `${formatCompactNumber(topSummary.cachedTokens)} / ${formatPercent(topSummary.inputTokens > 0 ? topSummary.cachedTokens / topSummary.inputTokens : 0)}` },
+        { label: t('monitoring.today_cached_tokens'), value: formatCompactNumber(todaySummary.cachedTokens) },
+        { label: t('monitoring.total_cache_hits'), value: `${formatCompactNumber(topSummary.cachedTokens)} / ${formatPercent(topSummary.inputTokens > 0 ? topSummary.cachedTokens / topSummary.inputTokens : 0)}` },
       ],
     },
     {
       key: 'billing',
-      title: '计费',
-      label: '今日花费',
+      title: t('monitoring.billing_title'),
+      label: t('monitoring.today_cost'),
       value: hasPrices ? formatUsd(todayCost) : '--',
       accent: 'amber',
       footer: [
-        { label: '较昨日', value: hasPrices ? formatDeltaPercent(todayCost, yesterdayCost) : '--' },
-        { label: '总计花费', value: hasPrices ? formatUsd(topSummary.totalCost) : '--' },
+        { label: t('monitoring.vs_yesterday'), value: hasPrices ? formatDeltaPercent(todayCost, yesterdayCost) : '--' },
+        { label: t('monitoring.total_cost_label'), value: hasPrices ? formatUsd(topSummary.totalCost) : '--' },
       ],
     },
   ];
@@ -2929,6 +2939,7 @@ export function MonitoringCenterPage() {
               points={usageTrendPoints}
               hasPrices={hasPrices}
               emptyText={t('monitoring.no_data')}
+              t={t}
             />
             <ApiKeyRankingPanel
               title={t('monitoring.api_key_ranking_title')}
@@ -2939,6 +2950,7 @@ export function MonitoringCenterPage() {
               onMetricChange={setApiKeyRankingMetric}
               emptyText={t('monitoring.no_data')}
               hasPrices={hasPrices}
+              t={t}
             />
           </div>
           <div className={styles.rankingGrid}>
@@ -2951,22 +2963,24 @@ export function MonitoringCenterPage() {
               onMetricChange={setModelRankingMetric}
               emptyText={t('monitoring.no_data')}
               hasPrices={hasPrices}
+              t={t}
             />
             <TokenDistributionPanel
               points={tokenDistributionPoints}
               emptyText={t('monitoring.no_data')}
               hasPrices={hasPrices}
+              t={t}
             />
           </div>
         </section>
       ) : (
         <section className={styles.usageTrendCollapsed}>
           <div>
-            <h2>使用趋势</h2>
-            <p>分析版块已隐藏，可随时重新显示。</p>
+            <h2>{t('monitoring.usage_stats_title')}</h2>
+            <p>{t('monitoring.analysis_hidden_desc')}</p>
           </div>
           <button type="button" className={styles.usageTrendHideButton} onClick={() => setIsUsageTrendHidden(false)}>
-            显示分析
+            {t('monitoring.show_analysis')}
           </button>
         </section>
       )}
@@ -2995,11 +3009,11 @@ export function MonitoringCenterPage() {
       ) : (
         <section className={styles.usageTrendCollapsed}>
           <div>
-            <h2>账号统计</h2>
-            <p>账号统计已隐藏，可随时重新显示。</p>
+            <h2>{t('monitoring.account_stats_title')}</h2>
+            <p>{t('monitoring.account_stats_hidden_desc')}</p>
           </div>
           <button type="button" className={styles.usageTrendHideButton} onClick={() => setIsAccountStatsHidden(false)}>
-            显示账号统计
+            {t('monitoring.show_account_stats')}
           </button>
         </section>
       )}
@@ -3044,7 +3058,7 @@ export function MonitoringCenterPage() {
             value={selectedApiKey}
             options={apiKeyOptions}
             onChange={setSelectedApiKey}
-            ariaLabel="按 API 密钥筛选"
+            ariaLabel={t('monitoring.filter_api_key')}
           />
           <Select
             value={selectedProvider}
@@ -3083,7 +3097,7 @@ export function MonitoringCenterPage() {
               <tr>
                 <th>{t('monitoring.column_type')}</th>
                 <th>{t('monitoring.column_model')}</th>
-                <th>API 密钥</th>
+                <th>{t('monitoring.api_key_label')}</th>
                 <th>{t('monitoring.recent_status')}</th>
                 <th>{t('monitoring.request_status')}</th>
                 <th>{t('monitoring.column_success_rate')}</th>

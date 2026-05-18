@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type Dispatch, type SetStateAction } from 'react';
+import { useCallback, useEffect, useMemo, useReducer, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Button } from '@/components/ui/Button';
 import { Card } from '@/components/ui/Card';
@@ -11,6 +11,8 @@ import {
   IconChevronUp,
 } from '@/components/ui/icons';
 import {
+  ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE,
+  ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS,
   ACCOUNT_INSPECTION_SETTING_LIMITS,
   applyAccountInspectionExecutionResult,
   buildAccountInspectionBackendViewState,
@@ -43,6 +45,7 @@ import { quotaPersistenceMiddleware } from '@/extensions/quota/persistenceMiddle
 import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
 import type { AuthFileItem, AuthFilesResponse } from '@/types';
 import { isDisabledAuthFile, isQuotaLowState, readBooleanValue, resolveAuthProvider } from '@/utils/quota';
+import { resolveProviderDisplayLabel } from '@/utils/sourceResolver';
 import styles from './AccountInspectionPage.module.scss';
 
 type RunStatus = 'idle' | 'running' | 'paused' | 'success' | 'error';
@@ -492,12 +495,11 @@ const summaryToneClass: Record<NonNullable<SummaryCard['tone']>, string> = {
 };
 
 const INSPECTION_TARGET_OPTIONS = [
-  { value: 'all', label: 'All' },
-  { value: 'antigravity', label: 'Antigravity' },
-  { value: 'claude', label: 'Claude' },
-  { value: 'codex', label: 'Codex' },
-  { value: 'gemini-cli', label: 'Gemini CLI' },
-  { value: 'kimi', label: 'Kimi' },
+  { value: ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE, label: 'All' },
+  ...ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS.map((provider) => ({
+    value: provider,
+    label: resolveProviderDisplayLabel(provider),
+  })),
 ] as const;
 
 const AUTO_ERROR_ACTION_OPTIONS: Array<{ value: AccountInspectionAutoErrorAction; labelKey: string }> = [
@@ -574,8 +576,15 @@ const countActions = (items: AccountInspectionResultItem[]) => {
   return summary;
 };
 
-const applyIfChanged = <T,>(setValue: Dispatch<SetStateAction<T>>, isEqual: (next: T, previous: T) => boolean) =>
-  (next: T) => setValue((previous) => (isEqual(next, previous) ? previous : next));
+const withChanged = <S, K extends keyof S>(
+  state: S,
+  key: K,
+  next: S[K],
+  isEqual: (left: S[K], right: S[K]) => boolean
+): S => {
+  if (isEqual(next, state[key])) return state;
+  return { ...state, [key]: next };
+};
 
 const sameProgressSnapshot = (left: AccountInspectionProgressSnapshot, right: AccountInspectionProgressSnapshot) =>
   left.total === right.total &&
@@ -651,32 +660,128 @@ const handleAccountInspectionControlError = (
   showNotification(message, 'error');
 };
 
-const applyBackendInspectionResponse = (
+type BackendInspectionViewState = ReturnType<typeof buildAccountInspectionBackendViewState>;
+
+type InspectionBackendState = {
+  inspectionSettings: AccountInspectionConfigurableSettings;
+  settingsDraft: InspectionSettingsDraft;
+  scheduleDraft: ScheduleDraft;
+  scheduleResponse: AccountInspectionScheduleResponse | null;
+  logs: InspectionLogEntry[];
+  runStatus: RunStatus;
+  progress: AccountInspectionProgressSnapshot;
+  result: AccountInspectionRunResult | null;
+  autoExecutionCounts: AutoExecutionCounts;
+};
+
+type InspectionBackendAction =
+  | { type: 'configChanged'; settings: AccountInspectionConfigurableSettings; syncDraft: boolean }
+  | { type: 'backendResponseReceived'; response: AccountInspectionScheduleResponse }
+  | { type: 'clearScheduleResponse' }
+  | { type: 'appendLog'; level: AccountInspectionLogLevel; message: string; timestamp: number }
+  | { type: 'clearLogs' }
+  | { type: 'startRun'; timestamp: number }
+  | { type: 'runFailed' }
+  | { type: 'clearAutoExecutionCounts' }
+  | { type: 'setResult'; result: AccountInspectionRunResult | null }
+  | { type: 'resetSettings'; settings: AccountInspectionConfigurableSettings }
+  | { type: 'setSettingsDraft'; draft: InspectionSettingsDraft }
+  | { type: 'updateSettingsDraft'; values: Partial<InspectionSettingsDraft> }
+  | { type: 'updateScheduleDraft'; values: Partial<ScheduleDraft> };
+
+const createInspectionBackendState = (settings: AccountInspectionConfigurableSettings): InspectionBackendState => ({
+  inspectionSettings: settings,
+  settingsDraft: toSettingsDraft(settings),
+  scheduleDraft: { enabled: false, intervalMinutes: '360' },
+  scheduleResponse: null,
+  logs: [],
+  runStatus: 'idle',
+  progress: createIdleAccountInspectionProgressSnapshot(),
+  result: null,
+  autoExecutionCounts: emptyAutoExecutionCounts(),
+});
+
+const applyBackendViewState = (
+  state: InspectionBackendState,
   response: AccountInspectionScheduleResponse,
-  setters: {
-    setInspectionSettings: (settings: AccountInspectionConfigurableSettings) => void;
-    setSettingsDraft: (draft: InspectionSettingsDraft) => void;
-    setScheduleDraft: (draft: ScheduleDraft) => void;
-    setScheduleResponse: (response: AccountInspectionScheduleResponse) => void;
-    setAutoExecutionCounts: (counts: AutoExecutionCounts) => void;
-    setLogs: (logs: InspectionLogEntry[]) => void;
-    setResult: (result: AccountInspectionRunResult | null) => void;
-    setProgress: (progress: AccountInspectionProgressSnapshot) => void;
-    setRunStatus?: (status: RunStatus) => void;
-  }
+  viewState: BackendInspectionViewState
 ) => {
-  const viewState = buildAccountInspectionBackendViewState(response);
-  setters.setInspectionSettings(viewState.settings);
-  setters.setSettingsDraft(toSettingsDraft(viewState.settings));
-  setters.setScheduleDraft(viewState.scheduleDraft);
-  setters.setScheduleResponse(response);
+  let nextState = state;
+  nextState = withChanged(nextState, 'inspectionSettings', viewState.settings, sameInspectionSettings);
+  nextState = withChanged(nextState, 'settingsDraft', toSettingsDraft(viewState.settings), sameSettingsDraft);
+  nextState = withChanged(nextState, 'scheduleDraft', viewState.scheduleDraft, sameScheduleDraft);
+  nextState = withChanged(nextState, 'scheduleResponse', response, sameScheduleResponse);
+  nextState = withChanged(nextState, 'autoExecutionCounts', viewState.autoExecutionCounts, sameAutoExecutionCounts);
+  nextState = withChanged(nextState, 'progress', viewState.progress, sameProgressSnapshot);
+  nextState = withChanged(nextState, 'runStatus', viewState.runStatus, sameRunStatus);
   if (viewState.logs) {
-    setters.setLogs(viewState.logs);
+    nextState = withChanged(nextState, 'logs', viewState.logs, Object.is);
   }
-  setters.setAutoExecutionCounts(viewState.autoExecutionCounts);
-  setters.setResult(viewState.result);
-  setters.setProgress(viewState.progress);
-  setters.setRunStatus?.(viewState.runStatus);
+  return withChanged(nextState, 'result', viewState.result, Object.is);
+};
+
+const inspectionBackendReducer = (
+  state: InspectionBackendState,
+  action: InspectionBackendAction
+): InspectionBackendState => {
+  switch (action.type) {
+    case 'configChanged': {
+      let nextState = withChanged(state, 'inspectionSettings', action.settings, sameInspectionSettings);
+      if (action.syncDraft) {
+        nextState = withChanged(nextState, 'settingsDraft', toSettingsDraft(action.settings), sameSettingsDraft);
+      }
+      return nextState;
+    }
+    case 'backendResponseReceived':
+      return applyBackendViewState(state, action.response, buildAccountInspectionBackendViewState(action.response));
+    case 'clearScheduleResponse':
+      return state.scheduleResponse === null ? state : { ...state, scheduleResponse: null };
+    case 'appendLog':
+      return {
+        ...state,
+        logs: appendInspectionLogEntry(state.logs, {
+          id: `${action.timestamp}-${state.logs.length}`,
+          level: action.level,
+          message: action.message,
+          timestamp: action.timestamp,
+        }),
+      };
+    case 'clearLogs':
+      return state.logs.length === 0 ? state : { ...state, logs: [] };
+    case 'startRun':
+      return {
+        ...state,
+        result: null,
+        runStatus: 'running',
+        autoExecutionCounts: emptyAutoExecutionCounts(),
+        progress: {
+          ...createIdleAccountInspectionProgressSnapshot(),
+          status: 'running',
+          startedAt: action.timestamp,
+          updatedAt: action.timestamp,
+        },
+      };
+    case 'runFailed':
+      return state.runStatus === 'error' ? state : { ...state, runStatus: 'error' };
+    case 'clearAutoExecutionCounts':
+      return withChanged(state, 'autoExecutionCounts', emptyAutoExecutionCounts(), sameAutoExecutionCounts);
+    case 'setResult':
+      return state.result === action.result ? state : { ...state, result: action.result };
+    case 'resetSettings':
+      return {
+        ...state,
+        inspectionSettings: action.settings,
+        settingsDraft: toSettingsDraft(action.settings),
+      };
+    case 'setSettingsDraft':
+      return withChanged(state, 'settingsDraft', action.draft, sameSettingsDraft);
+    case 'updateSettingsDraft':
+      return { ...state, settingsDraft: { ...state.settingsDraft, ...action.values } };
+    case 'updateScheduleDraft':
+      return { ...state, scheduleDraft: { ...state.scheduleDraft, ...action.values } };
+    default:
+      return state;
+  }
 };
 
 export function AccountInspectionPage() {
@@ -693,37 +798,40 @@ export function AccountInspectionPage() {
   const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);
   const kimiQuota = useQuotaStore((state) => state.kimiQuota);
 
-  const [inspectionSettings, setInspectionSettings] = useState<AccountInspectionConfigurableSettings>(() =>
-    loadAccountInspectionConfigurableSettings(config)
+  const [backendState, dispatchBackendState] = useReducer(
+    inspectionBackendReducer,
+    config,
+    (initialConfig) => createInspectionBackendState(loadAccountInspectionConfigurableSettings(initialConfig))
   );
-  const [settingsDraft, setSettingsDraft] = useState<InspectionSettingsDraft>(() =>
-    toSettingsDraft(loadAccountInspectionConfigurableSettings(config))
-  );
+  const {
+    inspectionSettings,
+    settingsDraft,
+    scheduleDraft,
+    scheduleResponse,
+    logs,
+    runStatus,
+    progress,
+    result,
+    autoExecutionCounts,
+  } = backendState;
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
-  const [scheduleDraft, setScheduleDraft] = useState<ScheduleDraft>({ enabled: false, intervalMinutes: '360' });
-  const [scheduleResponse, setScheduleResponse] = useState<AccountInspectionScheduleResponse | null>(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
-  const [logs, setLogs] = useState<InspectionLogEntry[]>([]);
   const [logsCollapsed, setLogsCollapsed] = useState(false);
   const [resultFilter, setResultFilter] = useState<ResultFilter>('pending');
   const [logLevelFilter, setLogLevelFilter] = useState<AccountInspectionLogLevel | 'all'>('all');
-  const [runStatus, setRunStatus] = useState<RunStatus>('idle');
-  const [progress, setProgress] = useState<AccountInspectionProgressSnapshot>(createIdleAccountInspectionProgressSnapshot);
-  const [result, setResult] = useState<AccountInspectionRunResult | null>(null);
   const [authFiles, setAuthFiles] = useState<AuthFileItem[]>([]);
   const [authFilesLoaded, setAuthFilesLoaded] = useState(false);
   const [executing, setExecuting] = useState(false);
   const [exportingAuthFiles, setExportingAuthFiles] = useState(false);
-  const [autoExecutionCounts, setAutoExecutionCounts] = useState<AutoExecutionCounts>(emptyAutoExecutionCounts);
   const logListRef = useRef<HTMLDivElement | null>(null);
   const refreshedBackendFinishedAtRef = useRef(0);
 
   useEffect(() => {
-    const nextSettings = loadAccountInspectionConfigurableSettings(config);
-    setInspectionSettings(nextSettings);
-    if (!isSettingsModalOpen) {
-      setSettingsDraft(toSettingsDraft(nextSettings));
-    }
+    dispatchBackendState({
+      type: 'configChanged',
+      settings: loadAccountInspectionConfigurableSettings(config),
+      syncDraft: !isSettingsModalOpen,
+    });
   }, [config, isSettingsModalOpen]);
 
   const loadAuthFiles = useCallback(async () => {
@@ -748,17 +856,7 @@ export function AccountInspectionPage() {
   }, [loadAuthFiles]);
 
   const applyBackendResponse = useCallback((response: AccountInspectionScheduleResponse) => {
-    applyBackendInspectionResponse(response, {
-      setInspectionSettings: applyIfChanged(setInspectionSettings, sameInspectionSettings),
-      setSettingsDraft: applyIfChanged(setSettingsDraft, sameSettingsDraft),
-      setScheduleDraft: applyIfChanged(setScheduleDraft, sameScheduleDraft),
-      setScheduleResponse: applyIfChanged(setScheduleResponse, sameScheduleResponse),
-      setAutoExecutionCounts: applyIfChanged(setAutoExecutionCounts, sameAutoExecutionCounts),
-      setLogs,
-      setResult,
-      setProgress: applyIfChanged(setProgress, sameProgressSnapshot),
-      setRunStatus: applyIfChanged(setRunStatus, sameRunStatus),
-    });
+    dispatchBackendState({ type: 'backendResponseReceived', response });
 
     if (
       response.status.state !== 'running' &&
@@ -779,7 +877,7 @@ export function AccountInspectionPage() {
       const response = await accountInspectionApi.getStatus();
       applyBackendResponse(response);
     } catch {
-      setScheduleResponse(null);
+      dispatchBackendState({ type: 'clearScheduleResponse' });
     }
   }, [applyBackendResponse, connectionStatus]);
 
@@ -806,12 +904,12 @@ export function AccountInspectionPage() {
       try {
         const message = JSON.parse(event.data) as AccountInspectionLogStreamMessage;
         if (message.log) {
-          setLogs((previous) => appendInspectionLogEntry(previous, {
-            id: `backend-${message.log!.time}-${previous.length}`,
+          dispatchBackendState({
+            type: 'appendLog',
             level: message.log!.level,
             message: message.log!.message,
             timestamp: message.log!.time,
-          }));
+          });
           if (message.type === 'log') {
             return;
           }
@@ -832,12 +930,7 @@ export function AccountInspectionPage() {
   }, [apiBase, applyBackendResponse, connectionStatus, managementKey]);
 
   const appendLog = useCallback((level: AccountInspectionLogLevel, message: string) => {
-    setLogs((previous) => appendInspectionLogEntry(previous, {
-      id: `${Date.now()}-${previous.length}`,
-      level,
-      message,
-      timestamp: Date.now(),
-    }));
+    dispatchBackendState({ type: 'appendLog', level, message, timestamp: Date.now() });
   }, []);
 
   useEffect(() => {
@@ -856,24 +949,21 @@ export function AccountInspectionPage() {
       }
 
       if (!preserveLogs) {
-        setLogs([]);
+        dispatchBackendState({ type: 'clearLogs' });
       }
       if (introMessage) {
         appendLog('info', introMessage);
       }
 
-      setResult(null);
-      setRunStatus('running');
+      dispatchBackendState({ type: 'startRun', timestamp: Date.now() });
       setLogsCollapsed(false);
-      setAutoExecutionCounts(emptyAutoExecutionCounts());
-      setProgress({ ...createIdleAccountInspectionProgressSnapshot(), status: 'running', startedAt: Date.now(), updatedAt: Date.now() });
 
       try {
         const response = await accountInspectionApi.runNow();
         applyBackendResponse(response);
       } catch (error) {
         handleAccountInspectionControlError(error, appendLog, showNotification, t('common.unknown_error'));
-        setRunStatus('error');
+        dispatchBackendState({ type: 'runFailed' });
         setLogsCollapsed(false);
       }
     },
@@ -949,7 +1039,7 @@ export function AccountInspectionPage() {
         appendLog('warning', t('monitoring.account_inspection_stopped'));
         applyBackendResponse(response);
         setLogsCollapsed(false);
-        setAutoExecutionCounts(emptyAutoExecutionCounts());
+        dispatchBackendState({ type: 'clearAutoExecutionCounts' });
       })
       .catch((error) => handleAccountInspectionControlError(error, appendLog, showNotification, t('common.unknown_error')));
   }, [appendLog, applyBackendResponse, showNotification, t]);
@@ -1013,7 +1103,7 @@ export function AccountInspectionPage() {
           showNotification(t('monitoring.account_inspection_execute_success'), 'success');
         }
         const nextResult = applyAccountInspectionExecutionResult(currentResult, execution);
-        setResult(nextResult);
+        dispatchBackendState({ type: 'setResult', result: nextResult });
         void loadAuthFiles();
       } finally {
         setExecuting(false);
@@ -1248,40 +1338,41 @@ export function AccountInspectionPage() {
         })
       : t('monitoring.account_inspection_progress_idle');
   const openSettingsModal = useCallback(() => {
-    setSettingsDraft(toSettingsDraft(inspectionSettings));
+    dispatchBackendState({ type: 'setSettingsDraft', draft: toSettingsDraft(inspectionSettings) });
     setIsSettingsModalOpen(true);
   }, [inspectionSettings]);
 
   const handleSettingsDraftChange = useCallback(
     (field: InspectionSettingsDraftField, value: string) => {
-      setSettingsDraft((previous) => ({
-        ...previous,
-        [field]: value,
-      }));
+      dispatchBackendState({
+        type: 'updateSettingsDraft',
+        values: { [field]: value },
+      });
     },
     []
   );
 
   const handleAutoExecuteQuotaLimitChange = useCallback((value: boolean) => {
-    setSettingsDraft((previous) => ({
-      ...previous,
-      autoExecuteQuotaLimitDisable: value,
-    }));
+    dispatchBackendState({
+      type: 'updateSettingsDraft',
+      values: { autoExecuteQuotaLimitDisable: value },
+    });
   }, []);
 
   const handleAutoExecuteQuotaRecoveryChange = useCallback((value: boolean) => {
-    setSettingsDraft((previous) => ({
-      ...previous,
-      autoExecuteQuotaRecoveryEnable: value,
-    }));
+    dispatchBackendState({
+      type: 'updateSettingsDraft',
+      values: { autoExecuteQuotaRecoveryEnable: value },
+    });
   }, []);
 
   const handleAutoExecuteAccountErrorActionChange = useCallback((value: string) => {
-    setSettingsDraft((previous) => ({
-      ...previous,
-      autoExecuteAccountErrorAction:
-        value === 'disable' || value === 'delete' ? value : 'none',
-    }));
+    dispatchBackendState({
+      type: 'updateSettingsDraft',
+      values: {
+        autoExecuteAccountErrorAction: value === 'disable' || value === 'delete' ? value : 'none',
+      },
+    });
   }, []);
 
   const parseIntegerInRange = useCallback(
@@ -1381,8 +1472,7 @@ export function AccountInspectionPage() {
   const handleResetSettings = useCallback(() => {
     clearAccountInspectionConfigurableSettings();
     const nextSettings = saveAccountInspectionConfigurableSettings(DEFAULT_ACCOUNT_INSPECTION_SETTINGS);
-    setInspectionSettings(nextSettings);
-    setSettingsDraft(toSettingsDraft(nextSettings));
+    dispatchBackendState({ type: 'resetSettings', settings: nextSettings });
     showNotification(t('monitoring.account_inspection_settings_reset'), 'success');
   }, [showNotification, t]);
 
@@ -1739,7 +1829,7 @@ export function AccountInspectionPage() {
             </div>
             <ToggleSwitch
               checked={scheduleDraft.enabled}
-              onChange={(value) => setScheduleDraft((previous) => ({ ...previous, enabled: value }))}
+              onChange={(value) => dispatchBackendState({ type: 'updateScheduleDraft', values: { enabled: value } })}
               ariaLabel={t('monitoring.account_inspection_schedule_enabled_label')}
             />
           </div>
@@ -1749,7 +1839,7 @@ export function AccountInspectionPage() {
                 label={t('monitoring.account_inspection_schedule_interval_label')}
                 type="number"
                 value={scheduleDraft.intervalMinutes}
-                onChange={(event) => setScheduleDraft((previous) => ({ ...previous, intervalMinutes: event.target.value }))}
+                onChange={(event) => dispatchBackendState({ type: 'updateScheduleDraft', values: { intervalMinutes: event.target.value } })}
                 min={SCHEDULE_INTERVAL_LIMITS.min}
                 step={1}
               />
