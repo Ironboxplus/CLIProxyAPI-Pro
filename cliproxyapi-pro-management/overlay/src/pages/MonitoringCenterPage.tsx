@@ -301,6 +301,10 @@ type UsageImportResult = {
   skipped?: number;
   total?: number;
   failed?: number;
+  modelPrices?: number;
+  modelPriceRecords?: number;
+  accountInspectionSchedule?: boolean;
+  accountInspectionScheduleRecords?: number;
 };
 
 
@@ -2412,13 +2416,20 @@ export function MonitoringCenterPage() {
         const result = await apiClient.post<UsageImportResult>('/usage/import', content, {
           headers: { 'Content-Type': 'application/x-ndjson' },
         });
+        const importedExtras = [
+          (result.modelPriceRecords ?? 0) > 0 ? t('usage_stats.import_model_prices_restored', { count: result.modelPrices ?? 0 }) : '',
+          result.accountInspectionSchedule ? t('usage_stats.import_account_inspection_schedule_restored') : '',
+        ].filter(Boolean).join(' · ');
         showNotification(
-          t('usage_stats.import_success', {
-            added: result.added ?? 0,
-            skipped: result.skipped ?? 0,
-            total: result.total ?? 0,
-            failed: result.failed ?? 0,
-          }),
+          [
+            t('usage_stats.import_success', {
+              added: result.added ?? 0,
+              skipped: result.skipped ?? 0,
+              total: result.total ?? 0,
+              failed: result.failed ?? 0,
+            }),
+            importedExtras,
+          ].filter(Boolean).join(' · '),
           (result.failed ?? 0) > 0 ? 'warning' : 'success'
         );
         await refreshAll();

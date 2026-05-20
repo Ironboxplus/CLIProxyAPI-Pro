@@ -3029,6 +3029,7 @@
 
   .settingsWorkbench {
     grid-template-columns: 1fr;
+    grid-template-rows: auto minmax(0, 1fr);
     min-height: 0;
   }
 
@@ -3181,9 +3182,26 @@
     grid-template-columns: 1fr;
   }
 
-  .settingsWorkbenchMain {
+  .settingsModal :global(.modal-body) {
+    grid-template-rows: minmax(0, 1fr) auto;
+    height: calc(100vh - 96px);
+    max-height: calc(100vh - 96px);
+    height: calc(100dvh - 96px);
+    max-height: calc(100dvh - 96px);
+  }
+
+  .settingsWorkbench {
+    height: 100%;
     max-height: none;
+    min-height: 0;
+  }
+
+  .settingsWorkbenchMain {
+    min-height: 0;
+    max-height: none;
+    overflow: auto;
     padding: 14px;
+    -webkit-overflow-scrolling: touch;
   }
 
   .settingsWorkbenchSection,
