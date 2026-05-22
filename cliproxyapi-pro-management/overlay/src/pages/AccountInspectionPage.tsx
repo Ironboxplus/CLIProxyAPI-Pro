@@ -428,6 +428,27 @@ const resolveResultHealthStatus = (item: AccountInspectionResultItem): ResultHea
 };
 
 const ACCOUNT_INVALID_ERROR_STATUSES = new Set([400, 401, 403, 404]);
+const ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET = new Set<string>(ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS);
+
+const readAuthFileField = (file: AuthFileItem, key: string) =>
+  readStringValue((file as unknown as Record<string, unknown>)[key]);
+
+const isAccountInspectionApiKeyAuthFile = (file: AuthFileItem) => {
+  const label = readAuthFileField(file, 'label').toLowerCase();
+  const source = readAuthFileField(file, 'source').toLowerCase();
+  const apiKey = readAuthFileField(file, 'api_key') || readAuthFileField(file, 'apiKey');
+  const path = readAuthFileField(file, 'path');
+
+  return label.includes('apikey') ||
+    label.includes('api-key') ||
+    (source.startsWith('config:') && Boolean(apiKey)) ||
+    (Boolean(apiKey) && !path);
+};
+
+const isInspectableAccountInspectionAuthFile = (file: AuthFileItem) => {
+  const provider = resolveAuthProvider(file);
+  return ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET.has(provider) && !isAccountInspectionApiKeyAuthFile(file);
+};
 
 const readAuthFileStatusMessage = (file: AuthFileItem) => {
   const raw = file['status_message'] ?? file.statusMessage;
@@ -552,9 +573,10 @@ const buildAuthFileAccountStats = (
   usedPercentThreshold: number,
   antigravityQuotaMode: AccountInspectionAntigravityQuotaMode
 ): AuthFileAccountStats => {
+  const inspectableFiles = files.filter(isInspectableAccountInspectionAuthFile);
   const providerStats = new Map<string, ProviderAccountStats>();
   const stats: AuthFileAccountStats = {
-    total: files.length,
+    total: inspectableFiles.length,
     providerCount: 0,
     enabled: 0,
     highAvailable: 0,
@@ -565,7 +587,7 @@ const buildAuthFileAccountStats = (
     providers: [],
   };
 
-  files.forEach((file) => {
+  inspectableFiles.forEach((file) => {
     const provider = resolveAuthProvider(file) || 'unknown';
     const disabled = isDisabledAuthFile(file);
     const quotaLow = isProviderQuotaLow(
@@ -1351,7 +1373,8 @@ export function AccountInspectionPage() {
 
     try {
       const response = await apiClient.get<AuthFilesResponse>('/auth-files');
-      setAuthFiles(Array.isArray(response.files) ? response.files : []);
+      const files = Array.isArray(response.files) ? response.files.filter(isInspectableAccountInspectionAuthFile) : [];
+      setAuthFiles(files);
       setAuthFilesLoaded(true);
     } catch {
       setAuthFiles([]);
@@ -1502,7 +1525,9 @@ export function AccountInspectionPage() {
     setExportingAuthFiles(true);
     try {
       const response = await apiClient.get<AuthFilesResponse>('/auth-files');
-      const files = Array.isArray(response.files) ? response.files : [];
+      const files = Array.isArray(response.files)
+        ? response.files.filter(isInspectableAccountInspectionAuthFile)
+        : [];
       const entries = await Promise.all(
         files
           .filter((file) => typeof file.name === 'string' && file.name.trim())

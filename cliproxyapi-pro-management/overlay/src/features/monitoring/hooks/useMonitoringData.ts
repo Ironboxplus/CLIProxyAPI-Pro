@@ -298,6 +298,7 @@ export type MonitoringEventRow = {
   planType: string;
   channel: string;
   channelHost: string;
+  channelDisabled: boolean;
   credentialDeleted: boolean;
   failed: boolean;
   statsIncluded: boolean;

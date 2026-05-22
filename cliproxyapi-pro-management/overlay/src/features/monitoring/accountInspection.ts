@@ -200,6 +200,8 @@ export const ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS = [
   'xai',
 ] as const;
 
+const ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET = new Set<string>(ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS);
+
 export type AccountInspectionSupportedProvider = typeof ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS[number];
 
 export const ACCOUNT_INSPECTION_SETTING_LIMITS = {
@@ -337,6 +339,14 @@ const readConfigurableSettingsFromConfig = (
   };
 };
 
+const normalizeInspectionTargetType = (value: unknown) => {
+  const targetType = readStringValue(value).toLowerCase();
+  return targetType === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE ||
+    ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET.has(targetType)
+    ? targetType
+    : DEFAULT_ACCOUNT_INSPECTION_SETTINGS.targetType;
+};
+
 const normalizeConfigurableSettings = (
   input?: Partial<AccountInspectionConfigurableSettings> | null
 ): AccountInspectionConfigurableSettings => {
@@ -353,7 +363,7 @@ const normalizeConfigurableSettings = (
   );
 
   return {
-    targetType: readStringValue(merged.targetType).toLowerCase() || DEFAULT_ACCOUNT_INSPECTION_SETTINGS.targetType,
+    targetType: normalizeInspectionTargetType(merged.targetType),
     workers,
     deleteWorkers: clampInteger(
       normalizeNumberValue(merged.deleteWorkers),

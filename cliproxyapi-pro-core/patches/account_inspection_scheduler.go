@@ -1259,8 +1259,26 @@ func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
 	}
 }
 
+func isAccountInspectionAPIKeyAuth(auth *coreauth.Auth) bool {
+	if auth == nil {
+		return false
+	}
+	label := strings.ToLower(strings.TrimSpace(auth.Label))
+	if strings.Contains(label, "apikey") || strings.Contains(label, "api-key") {
+		return true
+	}
+	source := strings.ToLower(strings.TrimSpace(authAttribute(auth, "source")))
+	if strings.HasPrefix(source, "config:") && strings.TrimSpace(authAttribute(auth, "api_key")) != "" {
+		return true
+	}
+	return strings.TrimSpace(authAttribute(auth, "api_key")) != "" && strings.TrimSpace(authAttribute(auth, "path")) == ""
+}
+
 func shouldInspectAccount(account accountInspectionAccount, targetType string) bool {
 	if account.Auth == nil {
+		return false
+	}
+	if isAccountInspectionAPIKeyAuth(account.Auth) {
 		return false
 	}
 	if _, ok := accountInspectionSupportedProviders[account.Provider]; !ok {
