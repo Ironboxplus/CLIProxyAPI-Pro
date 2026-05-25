@@ -137,11 +137,51 @@ def patch_layout(target: Path) -> None:
         "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n",
         "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n",
     )
-    replace_once(
-        path,
-        "    { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },\n",
-        "    { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },\n    { path: '/monitoring', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring },\n    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.monitoring },\n",
-    )
+    text = read(path)
+    if "path: '/monitoring'" not in text:
+        flat_quota_item = "    { path: '/quota', label: t('nav.quota_management'), icon: sidebarIcons.quota },\n"
+        grouped_quota_item = (
+            "        {\n"
+            "          path: '/quota',\n"
+            "          labelKey: 'nav.quota_management',\n"
+            "          metaKey: 'nav_meta.quota_management',\n"
+            "          icon: sidebarIcons.quota,\n"
+            "        },\n"
+        )
+        if flat_quota_item in text:
+            write(
+                path,
+                text.replace(
+                    flat_quota_item,
+                    flat_quota_item
+                    + "    { path: '/monitoring', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring },\n"
+                    + "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.monitoring },\n",
+                    1,
+                ),
+            )
+        elif grouped_quota_item in text:
+            write(
+                path,
+                text.replace(
+                    grouped_quota_item,
+                    grouped_quota_item
+                    + "        {\n"
+                    + "          path: '/monitoring',\n"
+                    + "          labelKey: 'nav.monitoring_center',\n"
+                    + "          metaKey: 'nav_meta.monitoring_center',\n"
+                    + "          icon: sidebarIcons.monitoring,\n"
+                    + "        },\n"
+                    + "        {\n"
+                    + "          path: '/account-inspection',\n"
+                    + "          labelKey: 'nav.account_inspection',\n"
+                    + "          metaKey: 'nav_meta.account_inspection',\n"
+                    + "          icon: sidebarIcons.monitoring,\n"
+                    + "        },\n",
+                    1,
+                ),
+            )
+        else:
+            raise RuntimeError(f'Pattern not found in {path}: quota navigation item')
     replace_once(
         path,
         "            <PageTransition\n",
@@ -305,18 +345,48 @@ def patch_supporting_api_and_types(target: Path) -> None:
     )
 
     select_path = target / 'src/components/ui/Select.tsx'
-    replace_once(
-        select_path,
-        "  placeholder?: string;\n  className?: string;\n  disabled?: boolean;\n",
-        "  placeholder?: string;\n  className?: string;\n  triggerClassName?: string;\n  dropdownClassName?: string;\n  disabled?: boolean;\n",
-    )
-    replace_once(
-        select_path,
-        "  placeholder,\n  className,\n  disabled = false,\n",
-        "  placeholder,\n  className,\n  triggerClassName,\n  dropdownClassName,\n  disabled = false,\n",
-    )
-    replace_once(select_path, "            className={styles.dropdown}\n", "            className={[styles.dropdown, dropdownClassName].filter(Boolean).join(' ')}\n")
-    replace_once(select_path, "          className={styles.trigger}\n", "          className={[styles.trigger, triggerClassName].filter(Boolean).join(' ')}\n")
+    if 'triggerClassName?: string;' not in read(select_path):
+        replace_once(
+            select_path,
+            "  placeholder?: string;\n  className?: string;\n  disabled?: boolean;\n",
+            "  placeholder?: string;\n  className?: string;\n  triggerClassName?: string;\n  dropdownClassName?: string;\n  disabled?: boolean;\n",
+        )
+    if 'triggerClassName,' not in read(select_path):
+        replace_once(
+            select_path,
+            "  placeholder,\n  className,\n  disabled = false,\n",
+            "  placeholder,\n  className,\n  triggerClassName,\n  dropdownClassName,\n  disabled = false,\n",
+        )
+    if 'dropdownClassName].filter(Boolean).join' not in read(select_path):
+        replace_once(
+            select_path,
+            "            className={styles.dropdown}\n",
+            "            className={[styles.dropdown, dropdownClassName].filter(Boolean).join(' ')}\n",
+        )
+    if 'triggerClassName].filter(Boolean).join' not in read(select_path):
+        text = read(select_path)
+        old_simple = "          className={styles.trigger}\n"
+        old_sized = "          className={`${styles.trigger} ${size === 'sm' ? styles.triggerSm : ''}`.trim()}\n"
+        if old_simple in text:
+            write(
+                select_path,
+                text.replace(
+                    old_simple,
+                    "          className={[styles.trigger, triggerClassName].filter(Boolean).join(' ')}\n",
+                    1,
+                ),
+            )
+        elif old_sized in text:
+            write(
+                select_path,
+                text.replace(
+                    old_sized,
+                    "          className={[styles.trigger, size === 'sm' ? styles.triggerSm : '', triggerClassName].filter(Boolean).join(' ')}\n",
+                    1,
+                ),
+            )
+        else:
+            raise RuntimeError(f'Pattern not found in {select_path}: Select trigger className')
 
 
 def patch_locales(target: Path) -> None:
@@ -326,6 +396,16 @@ def patch_locales(target: Path) -> None:
         data = json.loads(locale_path.read_text())
         additions = monitoring.get(locale_path.name, {})
         data.setdefault('nav', {}).update(additions.get('nav', {}))
+        nav_additions = additions.get('nav', {})
+        data.setdefault('nav_meta', {}).update(
+            additions.get(
+                'nav_meta',
+                {
+                    'monitoring_center': nav_additions.get('monitoring_center', 'Request Monitoring'),
+                    'account_inspection': nav_additions.get('account_inspection', 'Account Inspection'),
+                },
+            )
+        )
         data['monitoring'] = additions.get('monitoring', data.get('monitoring', {}))
         data['usage_stats'] = additions.get('usage_stats', data.get('usage_stats', {}))
         data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_path.name, {}))
