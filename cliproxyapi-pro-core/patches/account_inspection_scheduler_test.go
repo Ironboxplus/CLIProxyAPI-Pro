@@ -1,6 +1,9 @@
 package management
 
-import "testing"
+import (
+	"strings"
+	"testing"
+)
 
 func testInspectionResult(key string, action accountInspectionAction, disabled bool, statusCode *int, isQuota bool, err string) accountInspectionResult {
 	return accountInspectionResult{
@@ -245,6 +248,14 @@ func TestQuotaSuccessStateIncludesParserMetadata(t *testing.T) {
 	}
 }
 
+func TestAntigravityQuotaURLsUseSummaryEndpoint(t *testing.T) {
+	for _, url := range antigravityQuotaURLs() {
+		if !strings.Contains(url, "retrieveUserQuotaSummary") {
+			t.Fatalf("antigravity quota url = %q, want retrieveUserQuotaSummary", url)
+		}
+	}
+}
+
 func TestBuildAntigravityGroupsSupportsSummaryBuckets(t *testing.T) {
 	body := `{
 		"groups": [{
@@ -277,6 +288,24 @@ func TestBuildAntigravityGroupsSupportsSummaryBuckets(t *testing.T) {
 	used := antigravityGroupUsedPercent(map[string]any{"buckets": buckets})
 	if used == nil || *used != 75 {
 		t.Fatalf("used percent = %v, want 75", used)
+	}
+}
+
+func TestBuildAntigravityGroupsSupportsWrappedBody(t *testing.T) {
+	body := `{
+		"body": "{\"groups\":[{\"displayName\":\"Claude/GPT\",\"buckets\":[{\"bucketId\":\"weekly\",\"displayName\":\"Weekly\",\"window\":\"weekly\",\"remainingFraction\":0.5}]}]}"
+	}`
+
+	groups, err := buildAntigravityGroups(body)
+	if err != nil {
+		t.Fatalf("buildAntigravityGroups() error = %v", err)
+	}
+	if len(groups) != 1 {
+		t.Fatalf("groups len = %d, want 1", len(groups))
+	}
+	buckets, ok := groups[0]["buckets"].([]map[string]any)
+	if !ok || len(buckets) != 1 || buckets[0]["remainingFraction"] != 0.5 {
+		t.Fatalf("wrapped buckets = %#v, want one 0.5 bucket", groups[0]["buckets"])
 	}
 }
 

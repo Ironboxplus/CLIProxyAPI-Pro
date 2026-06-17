@@ -1848,9 +1848,9 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 
 func antigravityQuotaURLs() []string {
 	return []string{
-		"https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
-		"https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:fetchAvailableModels",
-		"https://cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels",
+		"https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
+		"https://daily-cloudcode-pa.sandbox.googleapis.com/v1internal:retrieveUserQuotaSummary",
+		"https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
 	}
 }
 
@@ -2885,14 +2885,40 @@ func persistQuotaState(ctx context.Context, provider string, fileName string, st
 }
 
 func buildAntigravityGroups(body string) ([]map[string]any, error) {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+	payload, err := parseAntigravityQuotaPayload(body)
+	if err != nil {
 		return nil, err
 	}
 	if groups := buildAntigravitySummaryGroups(payload); len(groups) > 0 {
 		return groups, nil
 	}
 	return nil, fmt.Errorf("empty antigravity quota groups")
+}
+
+func parseAntigravityQuotaPayload(body string) (map[string]any, error) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(body), &payload); err != nil {
+		return nil, err
+	}
+	if len(anySlice(payload["groups"])) > 0 {
+		return payload, nil
+	}
+	bodyValue, ok := payload["body"]
+	if !ok {
+		return payload, nil
+	}
+	switch value := bodyValue.(type) {
+	case string:
+		var nested map[string]any
+		if err := json.Unmarshal([]byte(strings.TrimSpace(value)), &nested); err != nil {
+			return payload, nil
+		}
+		return nested, nil
+	case map[string]any:
+		return value, nil
+	default:
+		return payload, nil
+	}
 }
 
 func buildAntigravitySummaryGroups(payload map[string]any) []map[string]any {
