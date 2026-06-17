@@ -84,6 +84,28 @@ def replace_all(path: Path, old: str, new: str) -> None:
     write(path, text.replace(old, new))
 
 
+def replace_once_in_quota_config(path: Path, store_setter: str, old: str, new: str) -> None:
+    text = read(path)
+    marker = f"  storeSetter: '{store_setter}',"
+    marker_start = text.find(marker)
+    if marker_start == -1:
+        raise RuntimeError(f'Pattern not found in {path}: {marker!r}')
+
+    success_start = text.find('  buildSuccessState:', marker_start)
+    error_start = text.find('  buildErrorState:', success_start)
+    if success_start == -1 or error_start == -1:
+        raise RuntimeError(f'Pattern not found in {path}: buildSuccessState block for {store_setter}')
+
+    block = text[success_start:error_start]
+    if new in block:
+        return
+    if old not in block:
+        raise RuntimeError(f'Pattern not found in {path}: {old[:120]!r}')
+
+    updated = block.replace(old, new, 1)
+    write(path, f'{text[:success_start]}{updated}{text[error_start:]}')
+
+
 def insert_once(path: Path, marker: str, insertion: str, present: str) -> None:
     text = read(path)
     if present in text:
@@ -231,33 +253,39 @@ def patch_quota_types(target: Path) -> None:
 
 def patch_quota_configs(target: Path) -> None:
     path = target / 'src/components/quota/quotaConfigs.ts'
-    for old, new in [
+    for store_setter, old, new in [
         (
+            'setClaudeQuota',
             "    extraUsage: data.extraUsage,\n    planType: data.planType,\n  }),",
             "    extraUsage: data.extraUsage,\n    planType: data.planType,\n    cachedAt: Date.now(),\n  }),",
         ),
         (
-            "  buildSuccessState: (groups) => ({ status: 'success', groups }),",
-            "  buildSuccessState: (groups) => ({ status: 'success', groups, cachedAt: Date.now() }),",
+            'setAntigravityQuota',
+            "    serverTimeOffsetMs: data.serverTimeOffsetMs,\n  }),",
+            "    serverTimeOffsetMs: data.serverTimeOffsetMs,\n    cachedAt: Date.now(),\n  }),",
         ),
         (
+            'setCodexQuota',
             "    windows: data.windows,\n    planType: data.planType,\n    subscriptionActiveUntil: data.subscriptionActiveUntil,\n    rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,\n  }),",
             "    windows: data.windows,\n    planType: data.planType,\n    subscriptionActiveUntil: data.subscriptionActiveUntil,\n    rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,\n    cachedAt: Date.now(),\n  }),",
         ),
         (
+            'setGeminiCliQuota',
             "      creditBalance: supplementarySnapshot.creditBalance ?? data.creditBalance,\n    };",
             "      creditBalance: supplementarySnapshot.creditBalance ?? data.creditBalance,\n      cachedAt: Date.now(),\n    };",
         ),
         (
+            'setKimiQuota',
             "  buildSuccessState: (rows) => ({ status: 'success', rows }),",
             "  buildSuccessState: (rows) => ({ status: 'success', rows, cachedAt: Date.now() }),",
         ),
         (
+            'setXaiQuota',
             "  buildSuccessState: (billing) => ({ status: 'success', billing }),",
             "  buildSuccessState: (billing) => ({ status: 'success', billing, cachedAt: Date.now() }),",
         ),
     ]:
-        replace_once(path, old, new)
+        replace_once_in_quota_config(path, store_setter, old, new)
 
 
 def patch_quota_page(target: Path) -> None:
