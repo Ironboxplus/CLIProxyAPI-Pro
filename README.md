@@ -10,7 +10,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 ## 核心特色
 
 - 持久化保存请求数据，支持导入、导出、webdav 备份
-- 账号巡检支持 Codex、Claude、Antigravity、Gemini CLI、Kimi、xAI
+- 账号巡检支持 Codex、Claude、Antigravity、Kimi、xAI
 - 账号巡检结果（配额和账号异常状态）支持持久化到配额管理和认证文件
 - 账号巡检支持自动化启用、禁用、删除、主动刷新令牌
 - 账号巡检针对 Antigravity 软封禁（有配额，但是无法请求）提供深度检测

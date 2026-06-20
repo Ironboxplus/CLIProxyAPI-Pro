@@ -23,7 +23,6 @@ const PROVIDER_DISPLAY_LABELS: Record<string, string> = {
   claude: 'Claude',
   codex: 'Codex',
   gemini: 'Gemini',
-  'gemini-cli': 'Gemini CLI',
   aistudio: 'AI Studio',
   kimi: 'Kimi',
   vertex: 'Vertex',

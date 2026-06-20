@@ -93,7 +93,6 @@ The embedded service stores quota snapshots in SQLite for these providers:
 - Antigravity
 - Claude
 - Codex
-- Gemini CLI
 - Kimi
 
 The management UI reads and writes this cache through `/usage/quota-cache`, so quota cards can be restored after page refreshes, browser changes, and backend restarts.
@@ -119,7 +118,6 @@ The scheduler can inspect accounts for:
 - Antigravity
 - Claude
 - Codex
-- Gemini CLI
 - Kimi
 
 It supports provider filtering, worker limits, retry/timeout settings, sampling, usage-threshold decisions, progress/status/log/result snapshots, pause/resume/stop controls, manual actions, and optional automatic actions for quota exhaustion, quota recovery, and account errors.

@@ -15,15 +15,7 @@
 +  cachedAt?: number;
  }
 
- export interface GeminiCliQuotaBucketState {
-@@ -227,6 +229,7 @@
-   creditBalance?: number | null;
-   error?: string;
-   errorStatus?: number;
-+  cachedAt?: number;
- }
-
- export interface CodexQuotaWindow {
+export interface CodexQuotaWindow {
 @@ -244,6 +247,7 @@
    planType?: string | null;
    error?: string;
@@ -65,14 +57,6 @@
    }),
    buildErrorState: (message, status) => ({
      status: 'error',
-@@ -1231,6 +1233,7 @@
-       tierLabel: supplementarySnapshot.tierLabel ?? data.tierLabel,
-       tierId: supplementarySnapshot.tierId ?? data.tierId,
-       creditBalance: supplementarySnapshot.creditBalance ?? data.creditBalance,
-+      cachedAt: Date.now(),
-     };
-   },
-   buildErrorState: (message, status) => ({
 @@ -1340,7 +1343,7 @@
    storeSelector: (state) => state.kimiQuota,
    storeSetter: 'setKimiQuota',

@@ -2,6 +2,7 @@
 import os
 import re
 import shutil
+import subprocess
 from pathlib import Path
 
 ROOT = Path(os.environ.get('SRC_ROOT', '/src/CLIProxyAPI'))
@@ -628,3 +629,4 @@ func (m *Manager) refreshForInspection(ctx context.Context, id string, force boo
 ''')
 
 flush_writes()
+subprocess.run(['go', 'mod', 'tidy'], cwd=ROOT, check=True)

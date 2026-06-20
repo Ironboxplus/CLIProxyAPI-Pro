@@ -57,7 +57,6 @@ Supported quota providers:
 - Antigravity
 - Claude
 - Codex
-- Gemini CLI
 - Kimi
 
 Quota cards also show cache timestamps and support single-card refresh when the feature flags in `src/config/features.ts` are enabled.
@@ -75,7 +74,6 @@ The page controls and displays backend-run inspections. The browser does not exe
 - Antigravity
 - Claude
 - Codex
-- Gemini CLI
 - Kimi
 
 Features include:

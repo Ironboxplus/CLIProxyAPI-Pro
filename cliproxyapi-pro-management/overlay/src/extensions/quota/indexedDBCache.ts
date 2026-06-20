@@ -11,7 +11,7 @@ const MAX_ENTRIES = 500;
 
 interface QuotaCacheEntry {
   id: string;                // Composite key: "provider:fileName"
-  provider: string;          // "claude" | "antigravity" | "codex" | "gemini-cli" | "kimi"
+  provider: string;          // "claude" | "antigravity" | "codex" | "kimi" | "xai"
   fileName: string;          // "file1.json"
   data: any;                 // Quota data (native object, no serialization needed)
   cachedAt: number;          // Data fetch timestamp

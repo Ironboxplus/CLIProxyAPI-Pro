@@ -59,7 +59,6 @@ var accountInspectionSupportedProviders = map[string]struct{}{
 	"antigravity": {},
 	"claude":      {},
 	"codex":       {},
-	"gemini-cli":  {},
 	"kimi":        {},
 	"xai":         {},
 }
@@ -1546,15 +1545,7 @@ func accountFromAuth(auth *coreauth.Auth) accountInspectionAccount {
 }
 
 func accountInspectionProvider(auth *coreauth.Auth) string {
-	provider := strings.ToLower(strings.TrimSpace(auth.Provider))
-	if provider == "gemini" && !accountInspectionHasAPIKey(auth) && geminiCLIProjectID(auth) != "" {
-		return "gemini-cli"
-	}
-	return provider
-}
-
-func accountInspectionHasAPIKey(auth *coreauth.Auth) bool {
-	return strings.TrimSpace(authAttribute(auth, "api_key")) != ""
+	return strings.ToLower(strings.TrimSpace(auth.Provider))
 }
 
 func isAccountInspectionAPIKeyAuth(auth *coreauth.Auth) bool {
@@ -1638,8 +1629,6 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 		decision, statusCode, err = s.inspectClaude(ctx, account, settings)
 	case "codex":
 		decision, statusCode, err = s.inspectCodex(ctx, account, settings)
-	case "gemini-cli":
-		decision, statusCode, err = s.inspectGeminiCLI(ctx, account, settings)
 	case "kimi":
 		decision, statusCode, err = s.inspectKimi(ctx, account, settings)
 	case "xai":
@@ -2123,84 +2112,6 @@ func (s *accountInspectionScheduler) inspectCodex(ctx context.Context, account a
 		s.persistQuotaState(ctx, account, quotaSuccessState(map[string]any{"windows": windows, "planType": codexPlanType(account.Auth, payload), "rawShapeHash": jsonShapeHash(resp.Body)}))
 	}
 	return codexDecision(account, resp.StatusCode, used, isQuota, settings.UsedPercentThreshold), status, nil
-}
-
-func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
-	projectID := geminiCLIProjectID(account.Auth)
-	if projectID == "" {
-		return accountInspectionDecision{}, nil, fmt.Errorf("missing Gemini CLI project id")
-	}
-	body := `{"project":"` + escapeJSONString(projectID) + `"}`
-	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
-		return s.apiCall(ctx, account.Auth, http.MethodPost, "https://cloudcode-pa.googleapis.com/v1internal:retrieveUserQuota", map[string]string{
-			"Authorization": "Bearer $TOKEN$",
-			"Content-Type":  "application/json",
-		}, body, settings.Timeout)
-	})
-	status := intPtr(resp.StatusCode)
-	if err != nil {
-		return accountInspectionDecision{}, status, err
-	}
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if isAccountErrorStatus(resp.StatusCode) {
-			return authErrorDecision(account, resp.StatusCode), status, nil
-		}
-		return accountInspectionDecision{}, status, fmt.Errorf("HTTP %d", resp.StatusCode)
-	}
-	buckets, used, err := buildGeminiBuckets(resp.Body)
-	if err != nil {
-		return accountInspectionDecision{}, status, err
-	}
-	supplementary := s.fetchGeminiCLISupplementary(ctx, account, projectID, settings)
-	s.persistQuotaState(ctx, account, quotaSuccessState(map[string]any{"buckets": buckets, "tierLabel": supplementary["tierLabel"], "tierId": supplementary["tierId"], "creditBalance": supplementary["creditBalance"], "rawShapeHash": jsonShapeHash(resp.Body)}))
-	return quotaDecision(account, used, len(buckets) > 0, settings.UsedPercentThreshold), status, nil
-}
-
-func (s *accountInspectionScheduler) fetchGeminiCLISupplementary(ctx context.Context, account accountInspectionAccount, projectID string, settings accountInspectionSettings) map[string]any {
-	result := map[string]any{"tierLabel": nil, "tierId": nil, "creditBalance": nil}
-	body := `{"cloudaicompanionProject":"` + escapeJSONString(projectID) + `","metadata":{"ideType":"IDE_UNSPECIFIED","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI","duetProject":"` + escapeJSONString(projectID) + `"}}`
-	resp, err := s.apiCall(ctx, account.Auth, http.MethodPost, "https://cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", map[string]string{
-		"Authorization": "Bearer $TOKEN$",
-		"Content-Type":  "application/json",
-	}, body, settings.Timeout)
-	if err != nil || resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return result
-	}
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(resp.Body), &payload); err != nil {
-		return result
-	}
-	tier := firstMap(payload, "paidTier", "paid_tier")
-	if tier == nil {
-		tier = firstMap(payload, "currentTier", "current_tier")
-	}
-	if tier == nil {
-		return result
-	}
-	if tierID := strings.ToLower(firstNonEmptyStringValue(stringFromAny(tier["id"]))); tierID != "" {
-		result["tierId"] = tierID
-		result["tierLabel"] = geminiCLITierLabel(tierID)
-	}
-	var total float64
-	found := false
-	for _, raw := range anySlice(firstAny(tier, "availableCredits", "available_credits")) {
-		credit, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		creditType := firstNonEmptyStringValue(stringFromAny(firstAny(credit, "creditType", "credit_type")))
-		if creditType != "GOOGLE_ONE_AI" {
-			continue
-		}
-		if amount, ok := floatFromAny(firstAny(credit, "creditAmount", "credit_amount")); ok {
-			total += amount
-			found = true
-		}
-	}
-	if found {
-		result["creditBalance"] = total
-	}
-	return result
 }
 
 func (s *accountInspectionScheduler) inspectKimi(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
@@ -3344,156 +3255,6 @@ func normalizeWindowID(value string) string {
 	return strings.Trim(builder.String(), "-")
 }
 
-type geminiCLIParsedBucket struct {
-	ModelID           string
-	TokenType         string
-	RemainingFraction *float64
-	RemainingAmount   *float64
-	ResetTime         string
-}
-
-type geminiCLIQuotaBucketGroup struct {
-	ID                        string
-	Label                     string
-	TokenType                 string
-	ModelIDs                  []string
-	PreferredModelID          string
-	PreferredBucket           *geminiCLIParsedBucket
-	FallbackRemainingFraction *float64
-	FallbackRemainingAmount   *float64
-	FallbackResetTime         string
-}
-
-func buildGeminiBuckets(body string) ([]map[string]any, *float64, error) {
-	var payload map[string]any
-	if err := json.Unmarshal([]byte(body), &payload); err != nil {
-		return nil, nil, err
-	}
-	parsedBuckets := make([]geminiCLIParsedBucket, 0)
-	for _, raw := range anySlice(payload["buckets"]) {
-		bucket, ok := raw.(map[string]any)
-		if !ok {
-			continue
-		}
-		modelID := normalizeGeminiCLIModelID(firstNonEmptyStringValue(stringFromAny(firstAny(bucket, "modelId", "model_id"))))
-		if modelID == "" {
-			continue
-		}
-		var remainingFraction *float64
-		if value, ok := geminiCLIFractionFromAny(firstAny(bucket, "remainingFraction", "remaining_fraction")); ok {
-			remainingFraction = &value
-		}
-		var remainingAmount *float64
-		if value, ok := floatFromAny(firstAny(bucket, "remainingAmount", "remaining_amount")); ok {
-			remainingAmount = &value
-			if remainingFraction == nil && value <= 0 {
-				zero := 0.0
-				remainingFraction = &zero
-			}
-		}
-		resetTime := firstNonEmptyStringValue(stringFromAny(firstAny(bucket, "resetTime", "reset_time")))
-		if remainingFraction == nil && resetTime != "" {
-			zero := 0.0
-			remainingFraction = &zero
-		}
-		parsedBuckets = append(parsedBuckets, geminiCLIParsedBucket{
-			ModelID:           modelID,
-			TokenType:         firstNonEmptyStringValue(stringFromAny(firstAny(bucket, "tokenType", "token_type"))),
-			RemainingFraction: remainingFraction,
-			RemainingAmount:   remainingAmount,
-			ResetTime:         resetTime,
-		})
-	}
-	groupedBuckets := buildGeminiCLIQuotaBuckets(parsedBuckets)
-	return groupedBuckets, geminiCLIUsedPercent(groupedBuckets), nil
-}
-
-func buildGeminiCLIQuotaBuckets(parsedBuckets []geminiCLIParsedBucket) []map[string]any {
-	grouped := make(map[string]*geminiCLIQuotaBucketGroup)
-	for _, bucket := range parsedBuckets {
-		if ignoredGeminiCLIModel(bucket.ModelID) {
-			continue
-		}
-		groupID, label, preferredModelID := geminiCLIGroup(bucket.ModelID)
-		mapKey := groupID + "::" + bucket.TokenType
-		existing := grouped[mapKey]
-		if existing == nil {
-			id := groupID
-			if bucket.TokenType != "" {
-				id += "-" + bucket.TokenType
-			}
-			existing = &geminiCLIQuotaBucketGroup{
-				ID:                        id,
-				Label:                     label,
-				TokenType:                 bucket.TokenType,
-				ModelIDs:                  []string{bucket.ModelID},
-				PreferredModelID:          preferredModelID,
-				FallbackRemainingFraction: cloneFloatPtr(bucket.RemainingFraction),
-				FallbackRemainingAmount:   cloneFloatPtr(bucket.RemainingAmount),
-				FallbackResetTime:         bucket.ResetTime,
-			}
-			if preferredModelID != "" && bucket.ModelID == preferredModelID {
-				bucketCopy := bucket
-				existing.PreferredBucket = &bucketCopy
-			}
-			grouped[mapKey] = existing
-			continue
-		}
-		existing.FallbackRemainingFraction = minFloatPtr(existing.FallbackRemainingFraction, bucket.RemainingFraction)
-		existing.FallbackRemainingAmount = minFloatPtr(existing.FallbackRemainingAmount, bucket.RemainingAmount)
-		existing.FallbackResetTime = pickEarlierResetTime(existing.FallbackResetTime, bucket.ResetTime)
-		existing.ModelIDs = append(existing.ModelIDs, bucket.ModelID)
-		if existing.PreferredModelID != "" && bucket.ModelID == existing.PreferredModelID {
-			bucketCopy := bucket
-			existing.PreferredBucket = &bucketCopy
-		}
-	}
-	groups := make([]*geminiCLIQuotaBucketGroup, 0, len(grouped))
-	for _, group := range grouped {
-		groups = append(groups, group)
-	}
-	sort.Slice(groups, func(i, j int) bool {
-		orderDiff := geminiCLIGroupOrder(groups[i].ID, groups[i].TokenType) - geminiCLIGroupOrder(groups[j].ID, groups[j].TokenType)
-		if orderDiff != 0 {
-			return orderDiff < 0
-		}
-		return groups[i].TokenType < groups[j].TokenType
-	})
-	result := make([]map[string]any, 0, len(groups))
-	for _, group := range groups {
-		remainingFraction := group.FallbackRemainingFraction
-		remainingAmount := group.FallbackRemainingAmount
-		resetTime := group.FallbackResetTime
-		if group.PreferredBucket != nil {
-			remainingFraction = group.PreferredBucket.RemainingFraction
-			remainingAmount = group.PreferredBucket.RemainingAmount
-			resetTime = group.PreferredBucket.ResetTime
-		}
-		result = append(result, map[string]any{
-			"id":                group.ID,
-			"label":             group.Label,
-			"remainingFraction": floatPtrAny(remainingFraction),
-			"remainingAmount":   floatPtrAny(remainingAmount),
-			"resetTime":         emptyStringAsNil(resetTime),
-			"tokenType":         emptyStringAsNil(group.TokenType),
-			"modelIds":          uniqueStrings(group.ModelIDs),
-		})
-	}
-	return result
-}
-
-func geminiCLIUsedPercent(buckets []map[string]any) *float64 {
-	values := make([]float64, 0, len(buckets))
-	for _, bucket := range buckets {
-		remaining, ok := floatFromAny(bucket["remainingFraction"])
-		if !ok {
-			continue
-		}
-		values = append(values, math.Max(0, math.Min(100, (1-remaining)*100)))
-	}
-	return maxFloatPtr(values)
-}
-
 func buildKimiRows(body string) ([]map[string]any, *float64, error) {
 	var payload map[string]any
 	if err := json.Unmarshal([]byte(body), &payload); err != nil {
@@ -3634,53 +3395,6 @@ func toKimiUsageRow(data map[string]any, fallbackLabel map[string]any) map[strin
 	}
 	row["resetHint"] = emptyStringAsNil(kimiResetHint(data))
 	return row
-}
-
-func geminiCLITierLabel(tierID string) string {
-	switch strings.ToLower(tierID) {
-	case "free-tier":
-		return "tier_free"
-	case "legacy-tier":
-		return "tier_legacy"
-	case "standard-tier":
-		return "tier_standard"
-	case "g1-pro-tier":
-		return "tier_pro"
-	case "g1-ultra-tier":
-		return "tier_ultra"
-	default:
-		return tierID
-	}
-}
-
-func geminiCLIGroup(modelID string) (string, string, string) {
-	switch modelID {
-	case "gemini-2.5-flash-lite":
-		return "gemini-flash-lite-series", "Gemini Flash Lite Series", "gemini-2.5-flash-lite"
-	case "gemini-3-flash-preview", "gemini-2.5-flash":
-		return "gemini-flash-series", "Gemini Flash Series", "gemini-3-flash-preview"
-	case "gemini-3.1-pro-preview", "gemini-3-pro-preview", "gemini-2.5-pro":
-		return "gemini-pro-series", "Gemini Pro Series", "gemini-3.1-pro-preview"
-	default:
-		return modelID, modelID, ""
-	}
-}
-
-func geminiCLIGroupOrder(id string, tokenType string) int {
-	groupID := id
-	if tokenType != "" && strings.HasSuffix(groupID, "-"+tokenType) {
-		groupID = strings.TrimSuffix(groupID, "-"+tokenType)
-	}
-	switch groupID {
-	case "gemini-flash-lite-series":
-		return 0
-	case "gemini-flash-series":
-		return 1
-	case "gemini-pro-series":
-		return 2
-	default:
-		return math.MaxInt
-	}
 }
 
 func cloneFloatPtr(value *float64) *float64 {
@@ -3874,29 +3588,6 @@ func antigravityProjectID(auth *coreauth.Auth) string {
 	return "bamboo-precept-lgxtn"
 }
 
-func geminiCLIProjectID(auth *coreauth.Auth) string {
-	if auth == nil {
-		return ""
-	}
-	for _, source := range []map[string]any{auth.Metadata, stringMapToAnyMap(auth.Attributes)} {
-		if value := firstNonEmptyStringValue(
-			stringFromAny(source["project_id"]),
-			stringFromAny(source["projectId"]),
-			stringFromAny(source["gemini_virtual_project"]),
-			stringFromAny(source["cloudaicompanionProject"]),
-		); value != "" {
-			return value
-		}
-	}
-	_, accountInfo := auth.AccountInfo()
-	for _, account := range []string{firstNonEmptyAuthValue(auth, "account"), accountInfo} {
-		if projectID := regexpLastParen(account); projectID != "" {
-			return projectID
-		}
-	}
-	return ""
-}
-
 func codexAccountID(auth *coreauth.Auth) string {
 	if auth == nil {
 		return ""
@@ -3997,15 +3688,6 @@ func accountInspectionAuthEmail(auth *coreauth.Auth) string {
 	return idTokenClaim(auth.Metadata["id_token"], "email")
 }
 
-func regexpLastParen(value string) string {
-	lastOpen := strings.LastIndex(value, "(")
-	lastClose := strings.LastIndex(value, ")")
-	if lastOpen < 0 || lastClose <= lastOpen {
-		return ""
-	}
-	return strings.TrimSpace(value[lastOpen+1 : lastClose])
-}
-
 func firstNonEmptyAuthValue(auth *coreauth.Auth, keys ...string) string {
 	if auth == nil {
 		return ""
@@ -4085,33 +3767,6 @@ func anySlice(value any) []any {
 	default:
 		return nil
 	}
-}
-
-func normalizeGeminiCLIModelID(value string) string {
-	value = strings.TrimSpace(value)
-	return strings.TrimSuffix(value, "_vertex")
-}
-
-func geminiCLIFractionFromAny(value any) (float64, bool) {
-	if text, ok := value.(string); ok {
-		trimmed := strings.TrimSpace(text)
-		if strings.HasSuffix(trimmed, "%") {
-			parsed, err := strconv.ParseFloat(strings.TrimSpace(strings.TrimSuffix(trimmed, "%")), 64)
-			if err != nil {
-				return 0, false
-			}
-			return normalizeFraction(parsed / 100), true
-		}
-	}
-	parsed, ok := floatFromAny(value)
-	if !ok {
-		return 0, false
-	}
-	return normalizeFraction(parsed), true
-}
-
-func ignoredGeminiCLIModel(modelID string) bool {
-	return modelID == "gemini-2.0-flash" || strings.HasPrefix(modelID, "gemini-2.0-flash-")
 }
 
 func formatResetTime(value string) string {

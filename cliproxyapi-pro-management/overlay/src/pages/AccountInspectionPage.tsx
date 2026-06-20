@@ -67,7 +67,7 @@ type ManualAccountInspectionAction = Exclude<AccountInspectionAction, 'keep'>;
 
 type QuotaAccountStatsState = Pick<
   ReturnType<typeof useQuotaStore.getState>,
-  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'geminiCliQuota' | 'kimiQuota' | 'xaiQuota'
+  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'kimiQuota' | 'xaiQuota'
 >;
 
 type HealthCounts = {
@@ -643,12 +643,6 @@ const isAntigravityClaudeGptGroup = (group: unknown): boolean => {
   return combined.includes('claude') && (combined.includes('gpt') || combined.includes('openai'));
 };
 
-const isGeminiCliQuotaLow = (quota: unknown, usedPercentThreshold: number) => {
-  if (!isRecordValue(quota) || quota.status !== 'success') return false;
-  const used = maxQuotaUsedPercent(quota.buckets);
-  return used !== null && used >= usedPercentThreshold;
-};
-
 const isAntigravityQuotaLow = (
   quota: unknown,
   usedPercentThreshold: number,
@@ -679,8 +673,6 @@ const isProviderQuotaLow = (
   switch (provider) {
     case 'antigravity':
       return isAntigravityQuotaLow(quotaStore.antigravityQuota[fileName], usedPercentThreshold, antigravityQuotaMode);
-    case 'gemini-cli':
-      return isGeminiCliQuotaLow(quotaStore.geminiCliQuota[fileName], usedPercentThreshold);
     case 'claude':
       return isQuotaLowState(quotaStore.claudeQuota[fileName], usedPercentThreshold);
     case 'codex':
@@ -1533,7 +1525,6 @@ export function AccountInspectionPage() {
   const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);
   const claudeQuota = useQuotaStore((state) => state.claudeQuota);
   const codexQuota = useQuotaStore((state) => state.codexQuota);
-  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);
   const kimiQuota = useQuotaStore((state) => state.kimiQuota);
   const xaiQuota = useQuotaStore((state) => state.xaiQuota);
 
@@ -2186,8 +2177,8 @@ export function AccountInspectionPage() {
 
 
   const quotaStore = useMemo(
-    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),
-    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]
+    () => ({ antigravityQuota, claudeQuota, codexQuota, kimiQuota, xaiQuota }),
+    [antigravityQuota, claudeQuota, codexQuota, kimiQuota, xaiQuota]
   );
 
   useEffect(() => {

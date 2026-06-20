@@ -86,13 +86,13 @@ GitHub Actions 会先比较本仓库 latest release 和上游 latest release，�
   antigravityQuota: Record<string, AntigravityQuotaState>
   claudeQuota: Record<string, ClaudeQuotaState>
   codexQuota: Record<string, CodexQuotaState>
-  geminiCliQuota: Record<string, GeminiCliQuotaState>
   kimiQuota: Record<string, KimiQuotaState>
+  xaiQuota: Record<string, XaiQuotaState>
   setAntigravityQuota: (updater) => void
   setClaudeQuota: (updater) => void
   setCodexQuota: (updater) => void
-  setGeminiCliQuota: (updater) => void
   setKimiQuota: (updater) => void
+  setXaiQuota: (updater) => void
   clearQuotaCache: () => void
 }
 ```
@@ -113,8 +113,8 @@ interface QuotaStatusState {
 - `AntigravityQuotaState`
 - `ClaudeQuotaState`
 - `CodexQuotaState`
-- `GeminiCliQuotaState`
 - `KimiQuotaState`
+- `XaiQuotaState`
 
 ### 3. QuotaConfig 的 buildSuccessState
 

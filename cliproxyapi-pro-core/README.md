@@ -93,7 +93,6 @@ internal/embeddedusage
 - Antigravity
 - Claude
 - Codex
-- Gemini CLI
 - Kimi
 
 管理页面通过 `/usage/quota-cache` 读写该缓存，因此配额卡片可在页面刷新、浏览器切换和后端重启后恢复。
@@ -119,7 +118,6 @@ internal/embeddedusage
 - Antigravity
 - Claude
 - Codex
-- Gemini CLI
 - Kimi
 
 能力包括 provider 过滤、worker 数量限制、重试/超时、抽样、按用量阈值判断、进度/状态/日志/结果快照、暂停/继续/停止控制、手动操作，以及对额度耗尽、额度恢复、账号错误的可选自动操作。

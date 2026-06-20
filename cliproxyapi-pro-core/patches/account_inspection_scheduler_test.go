@@ -4,8 +4,6 @@ import (
 	"math"
 	"strings"
 	"testing"
-
-	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
 )
 
 func testInspectionResult(key string, action accountInspectionAction, disabled bool, statusCode *int, isQuota bool, err string) accountInspectionResult {
@@ -383,90 +381,6 @@ func TestBuildAntigravityGroupsRejectsLegacyModelsShape(t *testing.T) {
 
 	if _, err := buildAntigravityGroups(body); err == nil {
 		t.Fatalf("buildAntigravityGroups() error = nil, want legacy models shape rejected")
-	}
-}
-
-func TestBuildGeminiBucketsAlignsLatestQuotaGrouping(t *testing.T) {
-	body := `{
-		"buckets": [
-			{"modelId": "gemini-3-flash-preview_vertex", "tokenType": "input", "remainingFraction": "25%", "remainingAmount": 100, "resetTime": "2026-06-19T10:00:00Z"},
-			{"modelId": "gemini-2.5-flash", "tokenType": "input", "remainingFraction": 0.1, "remainingAmount": 50, "resetTime": "2026-06-19T09:00:00Z"},
-			{"model_id": "gemini-2.5-pro", "token_type": "output", "remaining_amount": 0},
-			{"modelId": "gemini-2.0-flash", "tokenType": "input", "remainingFraction": 0}
-		]
-	}`
-
-	buckets, used, err := buildGeminiBuckets(body)
-	if err != nil {
-		t.Fatalf("buildGeminiBuckets() error = %v", err)
-	}
-	if len(buckets) != 2 {
-		t.Fatalf("buckets len = %d, want 2 after ignoring gemini-2.0-flash", len(buckets))
-	}
-	if buckets[0]["id"] != "gemini-flash-series-input" {
-		t.Fatalf("first bucket id = %#v, want gemini-flash-series-input", buckets[0]["id"])
-	}
-	if buckets[0]["remainingFraction"] != 0.25 {
-		t.Fatalf("preferred remaining fraction = %#v, want 0.25 from percent string", buckets[0]["remainingFraction"])
-	}
-	if buckets[1]["id"] != "gemini-pro-series-output" || buckets[1]["remainingFraction"] != 0.0 {
-		t.Fatalf("pro bucket = %+v, want output bucket with zero remaining", buckets[1])
-	}
-	if used == nil || *used != 100 {
-		t.Fatalf("used percent = %v, want 100 from zero remaining pro bucket", used)
-	}
-}
-
-func TestGeminiCLIProjectIDSupportsLatestProjectFields(t *testing.T) {
-	auth := &coreauth.Auth{
-		Provider: "gemini-cli",
-		Metadata: map[string]any{
-			"account":                "user@example.com (account-project)",
-			"gemini_virtual_project": "metadata-project",
-		},
-		Attributes: map[string]string{
-			"project_id": "attribute-project",
-		},
-	}
-
-	if got := geminiCLIProjectID(auth); got != "metadata-project" {
-		t.Fatalf("geminiCLIProjectID() = %q, want metadata-project", got)
-	}
-
-	auth.Metadata = map[string]any{"account": "user@example.com (account-project)"}
-	if got := geminiCLIProjectID(auth); got != "attribute-project" {
-		t.Fatalf("geminiCLIProjectID() = %q, want attribute-project", got)
-	}
-
-	auth.Attributes = nil
-	if got := geminiCLIProjectID(auth); got != "account-project" {
-		t.Fatalf("geminiCLIProjectID() = %q, want account-project fallback", got)
-	}
-}
-
-func TestAccountInspectionProviderPromotesGeminiOAuthProjectToGeminiCLI(t *testing.T) {
-	auth := &coreauth.Auth{
-		Provider: "gemini",
-		FileName: "gemini-oauth.json",
-		Attributes: map[string]string{
-			"path": "/auth/gemini-oauth.json",
-		},
-		Metadata: map[string]any{
-			"project_id": "oauth-project",
-		},
-	}
-
-	if got := accountInspectionProvider(auth); got != "gemini-cli" {
-		t.Fatalf("accountInspectionProvider() = %q, want gemini-cli", got)
-	}
-	account := accountFromAuth(auth)
-	if !shouldInspectAccount(account, accountInspectionProviderAll) {
-		t.Fatalf("shouldInspectAccount() = false, want gemini oauth project file inspectable")
-	}
-
-	auth.Attributes["api_key"] = "secret"
-	if got := accountInspectionProvider(auth); got != "gemini" {
-		t.Fatalf("accountInspectionProvider(api key) = %q, want gemini", got)
 	}
 }
 

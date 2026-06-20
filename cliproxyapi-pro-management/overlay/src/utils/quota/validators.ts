@@ -3,24 +3,21 @@
  */
 
 import type { AuthFileItem } from '@/types';
-import { GEMINI_CLI_IGNORED_MODEL_PREFIXES } from './constants';
 import { normalizeNumberValue } from './parsers';
 
-export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'gemini-cli' | 'kimi' | 'xai';
+export type QuotaProviderType = 'antigravity' | 'claude' | 'codex' | 'kimi' | 'xai';
 
 type QuotaProviderMetadata = {
   quotaMapName:
     | 'antigravityQuota'
     | 'claudeQuota'
     | 'codexQuota'
-    | 'geminiCliQuota'
     | 'kimiQuota'
     | 'xaiQuota';
   setterName:
     | 'setAntigravityQuota'
     | 'setClaudeQuota'
     | 'setCodexQuota'
-    | 'setGeminiCliQuota'
     | 'setKimiQuota'
     | 'setXaiQuota';
 };
@@ -29,7 +26,6 @@ export const QUOTA_PROVIDER_METADATA: Record<QuotaProviderType, QuotaProviderMet
   antigravity: { quotaMapName: 'antigravityQuota', setterName: 'setAntigravityQuota' },
   claude: { quotaMapName: 'claudeQuota', setterName: 'setClaudeQuota' },
   codex: { quotaMapName: 'codexQuota', setterName: 'setCodexQuota' },
-  'gemini-cli': { quotaMapName: 'geminiCliQuota', setterName: 'setGeminiCliQuota' },
   kimi: { quotaMapName: 'kimiQuota', setterName: 'setKimiQuota' },
   xai: { quotaMapName: 'xaiQuota', setterName: 'setXaiQuota' },
 };
@@ -72,41 +68,7 @@ export function resolveAuthProvider(file: AuthFileItem): string {
   const raw = file.provider ?? file.type ?? file.typo ?? '';
   const key = String(raw).trim().toLowerCase().replace(/_/g, '-');
   if (key === 'x-ai' || key === 'grok') return 'xai';
-  if (key === 'gemini' && hasGeminiCliProjectHint(file)) return 'gemini-cli';
   return key;
-}
-
-function hasGeminiCliProjectHint(file: AuthFileItem): boolean {
-  if (readStringValue(file.api_key ?? file.apiKey)) return false;
-  const metadata =
-    file && typeof file.metadata === 'object' && file.metadata !== null
-      ? (file.metadata as Record<string, unknown>)
-      : null;
-  const attributes =
-    file && typeof file.attributes === 'object' && file.attributes !== null
-      ? (file.attributes as Record<string, unknown>)
-      : null;
-  if (readStringValue(metadata?.api_key ?? metadata?.apiKey ?? attributes?.api_key ?? attributes?.apiKey)) {
-    return false;
-  }
-  const directCandidates = [
-    file.project_id,
-    file.projectId,
-    file.gemini_virtual_project,
-    file.cloudaicompanionProject,
-    metadata?.project_id,
-    metadata?.projectId,
-    metadata?.gemini_virtual_project,
-    metadata?.cloudaicompanionProject,
-    attributes?.project_id,
-    attributes?.projectId,
-    attributes?.gemini_virtual_project,
-    attributes?.cloudaicompanionProject
-  ];
-  if (directCandidates.some((candidate) => readStringValue(candidate))) return true;
-  return [file.account, file['account'], metadata?.account, attributes?.account].some(
-    (candidate) => /\([^()]+\)/.test(readStringValue(candidate))
-  );
 }
 
 export function isAntigravityFile(file: AuthFileItem): boolean {
@@ -132,10 +94,6 @@ export function isClaudeOAuthFile(file: AuthFileItem): boolean {
 
 export function isCodexFile(file: AuthFileItem): boolean {
   return resolveAuthProvider(file) === 'codex';
-}
-
-export function isGeminiCliFile(file: AuthFileItem): boolean {
-  return resolveAuthProvider(file) === 'gemini-cli';
 }
 
 export function isKimiFile(file: AuthFileItem): boolean {
@@ -188,10 +146,4 @@ function isQuotaLowWindow(window: unknown, usedPercentThreshold: number): boolea
   const limit = normalizeNumberValue(window.limit);
   const used = normalizeNumberValue(window.used);
   return limit !== null && limit > 0 && used !== null && used >= limit;
-}
-
-export function isIgnoredGeminiCliModel(modelId: string): boolean {
-  return GEMINI_CLI_IGNORED_MODEL_PREFIXES.some(
-    (prefix) => modelId === prefix || modelId.startsWith(`${prefix}-`)
-  );
 }
