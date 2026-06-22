@@ -3041,7 +3041,7 @@
 }
 
 .realtimeTable {
-  min-width: 1360px;
+  min-width: 1392px;
   table-layout: fixed;
 }
 
@@ -3086,7 +3086,7 @@
 }
 
 .realtimeUsageCol {
-  width: 140px;
+  width: 172px;
 }
 
 .realtimeCostCol {
@@ -3177,6 +3177,10 @@
   line-height: 1.45;
 }
 
+.realtimeTable tbody td {
+  vertical-align: middle;
+}
+
 .table tbody td:first-child {
   border-left: 0;
   border-radius: 0;
@@ -3215,6 +3219,34 @@
 .primaryCell span {
   font-size: 13px;
   font-weight: 600;
+}
+
+.realtimeTimeCell {
+  white-space: normal;
+  line-height: 1.35;
+}
+
+.realtimeUsageCell {
+  gap: 6px;
+}
+
+.realtimeUsageBreakdown {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  overflow: visible;
+  text-overflow: clip;
+  white-space: normal;
+}
+
+.realtimeUsageBreakdown span {
+  flex: 0 0 auto;
+  overflow: visible;
+  text-overflow: clip;
+  font-size: inherit;
+  font-weight: inherit;
+  line-height: inherit;
+  white-space: nowrap;
 }
 
 .primaryCell small,
@@ -3648,12 +3680,17 @@
   gap: 2px;
 }
 
-.realtimeTable td:nth-child(11) .primaryCell span,
-.realtimeTable td:nth-child(11) .primaryCell small {
+.realtimeTable td:nth-child(11) .primaryCell > span,
+.realtimeTable td:nth-child(11) .primaryCell > small {
   display: block;
   white-space: nowrap;
   overflow-wrap: normal;
   word-break: normal;
+}
+
+.realtimeTable td:nth-child(11) .realtimeUsageBreakdown {
+  display: flex;
+  white-space: normal;
 }
 
 .logRowFailed td {

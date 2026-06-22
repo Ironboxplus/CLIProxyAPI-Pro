@@ -3669,11 +3669,16 @@ export function MonitoringCenterPage() {
                       {formatDurationMs(row.latencyMs, { locale: i18n.language })}
                     </span>
                   </td>
-                  <td>{new Date(row.timestampMs).toLocaleString(i18n.language)}</td>
+                  <td className={styles.realtimeTimeCell}>{new Date(row.timestampMs).toLocaleString(i18n.language)}</td>
                   <td>
-                    <div className={styles.primaryCell}>
+                    <div className={`${styles.primaryCell} ${styles.realtimeUsageCell}`}>
                       <span>{formatCompactNumber(row.totalTokens)}</span>
-                      <small>{`I ${formatCompactNumber(row.inputTokens)} · O ${formatCompactNumber(row.outputTokens)} · R ${formatCompactNumber(row.reasoningTokens)} · C ${formatCompactNumber(row.cachedTokens)}`}</small>
+                      <small className={styles.realtimeUsageBreakdown}>
+                        <span>{`I ${formatCompactNumber(row.inputTokens)}`}</span>
+                        <span>{`O ${formatCompactNumber(row.outputTokens)}`}</span>
+                        <span>{`R ${formatCompactNumber(row.reasoningTokens)}`}</span>
+                        <span>{`C ${formatCompactNumber(row.cachedTokens)}`}</span>
+                      </small>
                     </div>
                   </td>
                   <td>{hasPrices ? formatUsd(row.totalCost) : '--'}</td>
