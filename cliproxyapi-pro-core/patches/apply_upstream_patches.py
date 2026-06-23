@@ -1132,52 +1132,6 @@ replace_once(
 				}
 ''',
 )
-replace_once(
-    auth_files,
-    '''				if strings.EqualFold(strings.TrimSpace(typeValue), "codex") {
-					if claims := extractCodexIDTokenClaimsFromRaw(gjson.GetBytes(data, "id_token").String()); claims != nil {
-						fileData["id_token"] = claims
-					}
-				}
-''',
-    '''				if strings.EqualFold(strings.TrimSpace(typeValue), "codex") {
-					if claims := extractCodexIDTokenClaimsFromRaw(gjson.GetBytes(data, "id_token").String()); claims != nil {
-						fileData["id_token"] = claims
-					}
-				}
-				if projectIDsRaw := gjson.GetBytes(data, "project_ids"); projectIDsRaw.IsArray() {
-					var projectIDs []any
-					if errUnmarshal := json.Unmarshal([]byte(projectIDsRaw.Raw), &projectIDs); errUnmarshal == nil && len(projectIDs) > 0 {
-						fileData["project_ids"] = projectIDs
-					}
-				}
-				if geminiQuotaRaw := gjson.GetBytes(data, "gemini_cli_quota"); geminiQuotaRaw.IsObject() {
-					var geminiQuota map[string]any
-					if errUnmarshal := json.Unmarshal([]byte(geminiQuotaRaw.Raw), &geminiQuota); errUnmarshal == nil && len(geminiQuota) > 0 {
-						fileData["gemini_cli_quota"] = geminiQuota
-					}
-				}
-''',
-)
-replace_once(
-    auth_files,
-    '''	if projectID := authProjectID(auth); projectID != "" {
-		entry["project_id"] = projectID
-	}
-''',
-    '''	if projectID := authProjectID(auth); projectID != "" {
-		entry["project_id"] = projectID
-	}
-	if auth.Metadata != nil {
-		if projectIDs, ok := auth.Metadata["project_ids"]; ok && projectIDs != nil {
-			entry["project_ids"] = projectIDs
-		}
-		if geminiQuota, ok := auth.Metadata["gemini_cli_quota"]; ok && geminiQuota != nil {
-			entry["gemini_cli_quota"] = geminiQuota
-		}
-	}
-''',
-)
 insert_before(
     auth_files,
     'func extractCodexIDTokenClaims(auth *coreauth.Auth) gin.H {\n',

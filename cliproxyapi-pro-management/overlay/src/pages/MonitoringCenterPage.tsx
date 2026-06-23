@@ -34,7 +34,7 @@ import { apiClient } from '@/services/api/client';
 import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import { maskSensitiveText } from '@/utils/format';
-import { getStatusFromError, isAntigravityFile, isClaudeFile, isCodexFile, isGeminiCliFile, isKimiFile } from '@/utils/quota';
+import { getStatusFromError, isAntigravityFile, isClaudeFile, isCodexFile, isKimiFile } from '@/utils/quota';
 import { formatCompactNumber, formatDurationMs, formatUsd, normalizeAuthIndex, type ModelPrice } from '@/utils/usage';
 import {
   ANTIGRAVITY_CONFIG,
@@ -44,7 +44,6 @@ import {
   type QuotaConfig,
   type QuotaStore,
 } from '@/components/quota/quotaConfigs';
-import { GEMINI_CLI_CONFIG } from '@/extensions/quota/geminiCliQuotaConfig';
 import { QuotaProgressBar, type QuotaRenderHelpers, type QuotaStatusState } from '@/components/quota/QuotaCard';
 import quotaStyles from '@/pages/QuotaPage.module.scss';
 import styles from './MonitoringCenterPage.module.scss';
@@ -1203,7 +1202,6 @@ const getAccountQuotaConfig = (file: AuthFileItem): AnyQuotaConfig | undefined =
   if (isAntigravityFile(file)) return ANTIGRAVITY_CONFIG;
   if (isClaudeFile(file)) return CLAUDE_CONFIG;
   if (isCodexFile(file)) return CODEX_CONFIG;
-  if (isGeminiCliFile(file)) return GEMINI_CLI_CONFIG;
   if (isKimiFile(file)) return KIMI_CONFIG;
   return undefined;
 };

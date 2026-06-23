@@ -352,11 +352,6 @@ def patch_quota_configs(target: Path) -> None:
         "  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;",
         "  setCodexQuota: (updater: QuotaUpdater<Record<string, CodexQuotaState>>) => void;\n  setGeminiCliQuota: (updater: QuotaUpdater<Record<string, GeminiCliQuotaState>>) => void;\n  setKimiQuota: (updater: QuotaUpdater<Record<string, KimiQuotaState>>) => void;",
     )
-    replace_once(
-        path,
-        "  storeSelector: (state: QuotaStore) => Record<string, TState>;\n  storeSetter: keyof QuotaStore;\n",
-        "  storeSelector: (state: QuotaStore) => Record<string, TState>;\n  storeSetter: keyof QuotaStore;\n  resolveInitialQuotaState?: (file: AuthFileItem) => TState | null;\n  resolveQuotaKey?: (file: AuthFileItem, quotaMap: Record<string, TState>) => string;\n",
-    )
     for store_setter, old, new in [
         (
             'setClaudeQuota',
@@ -436,109 +431,6 @@ def patch_quota_page(target: Path) -> None:
         path,
         "\n  // Initialize persistence middleware\n  useEffect(() => {\n    if (FEATURES.QUOTA_PERSISTENCE) {\n      quotaPersistenceMiddleware.start();\n      return () => quotaPersistenceMiddleware.stop();\n    }\n  }, []);\n",
         "",
-    )
-
-
-def patch_quota_section(target: Path) -> None:
-    path = target / 'src/components/quota/QuotaSection.tsx'
-    replace_once(
-        path,
-        "  const { quota, loadQuota } = useQuotaLoader(config);\n",
-        "  const { quota, loadQuota, getQuotaKey } = useQuotaLoader(config);\n",
-    )
-    replace_once(
-        path,
-        "      const nextState: Record<string, TState> = {};\n      filteredFiles.forEach((file) => {\n        const cached = prev[file.name];\n        if (cached) {\n          nextState[file.name] = cached;\n        }\n      });\n      return nextState;\n",
-        "      const nextState: Record<string, TState> = {};\n      let changed = false;\n      filteredFiles.forEach((file) => {\n        const key = getQuotaKey(file, prev);\n        const cached = prev[key] ?? config.resolveInitialQuotaState?.(file) ?? undefined;\n        if (cached) {\n          nextState[key] = cached;\n          if (prev[key] !== cached) changed = true;\n        }\n      });\n      const prevKeys = Object.keys(prev);\n      if (!changed && prevKeys.length === Object.keys(nextState).length && prevKeys.every((key) => prev[key] === nextState[key])) {\n        return prev;\n      }\n      return nextState;\n",
-    )
-    replace_once(
-        path,
-        "  }, [filteredFiles, loading, setQuota]);\n",
-        "  }, [config, filteredFiles, getQuotaKey, loading, setQuota]);\n",
-    )
-    replace_once(
-        path,
-        "      if (disabled || file.disabled) return;\n      if (quota[file.name]?.status === 'loading') return;\n\n      setQuota((prev) => ({\n        ...prev,\n        [file.name]: config.buildLoadingState()\n      }));\n",
-        "      if (disabled || file.disabled) return;\n      const quotaKey = getQuotaKey(file, quota);\n      if (quota[quotaKey]?.status === 'loading') return;\n\n      setQuota((prev) => ({\n        ...prev,\n        [getQuotaKey(file, prev)]: config.buildLoadingState()\n      }));\n",
-    )
-    replace_once(
-        path,
-        "          ...prev,\n          [file.name]: config.buildSuccessState(data)\n",
-        "          ...prev,\n          [getQuotaKey(file, prev)]: config.buildSuccessState(data)\n",
-    )
-    replace_once(
-        path,
-        "          ...prev,\n          [file.name]: config.buildErrorState(message, status)\n",
-        "          ...prev,\n          [getQuotaKey(file, prev)]: config.buildErrorState(message, status)\n",
-    )
-    replace_once(
-        path,
-        "    [config, disabled, quota, setQuota, showNotification, t]\n",
-        "    [config, disabled, getQuotaKey, quota, setQuota, showNotification, t]\n",
-    )
-    replace_once(
-        path,
-        "      if (!resetQuota) return;\n      if (disabled || file.disabled) return;\n      if (quota[file.name]?.status === 'loading') return;\n      if (resettingQuotaName === file.name) return;\n",
-        "      if (!resetQuota) return;\n      if (disabled || file.disabled) return;\n      const quotaKey = getQuotaKey(file, quota);\n      if (quota[quotaKey]?.status === 'loading') return;\n      if (resettingQuotaName === file.name) return;\n",
-    )
-    replace_once(
-        path,
-        "              ...prev,\n              [file.name]: config.buildSuccessState(data)\n",
-        "              ...prev,\n              [getQuotaKey(file, prev)]: config.buildSuccessState(data)\n",
-    )
-    replace_once(
-        path,
-        "      disabled,\n      quota,\n      resettingQuotaName,\n",
-        "      disabled,\n      getQuotaKey,\n      quota,\n      resettingQuotaName,\n",
-    )
-    replace_once(
-        path,
-        "              const itemQuota = quota[item.name];\n              const isResettingQuota = resettingQuotaName === item.name;\n",
-        "              const itemQuota = quota[getQuotaKey(item, quota)];\n              const isResettingQuota = resettingQuotaName === item.name;\n",
-    )
-
-
-def patch_quota_loader(target: Path) -> None:
-    path = target / 'src/components/quota/useQuotaLoader.ts'
-    replace_once(
-        path,
-        "  name: string;\n  status: 'success' | 'error';\n",
-        "  name: string;\n  quotaKey: string;\n  status: 'success' | 'error';\n",
-    )
-    replace_once(
-        path,
-        "  const loadingRef = useRef(false);\n  const requestIdRef = useRef(0);\n",
-        "  const loadingRef = useRef(false);\n  const requestIdRef = useRef(0);\n  const quotaRef = useRef(quota);\n  quotaRef.current = quota;\n\n  const getQuotaKey = useCallback(\n    (file: AuthFileItem, quotaMap?: Record<string, TState>) =>\n      config.resolveQuotaKey?.(file, quotaMap ?? quotaRef.current) ?? file.name,\n    [config]\n  );\n",
-    )
-    replace_once(
-        path,
-        "          targets.forEach((file) => {\n            nextState[file.name] = config.buildLoadingState();\n          });\n",
-        "          targets.forEach((file) => {\n            nextState[getQuotaKey(file, nextState)] = config.buildLoadingState();\n          });\n",
-    )
-    replace_once(
-        path,
-        "              const data = await config.fetchQuota(file, t);\n              return { name: file.name, status: 'success', data };\n",
-        "              const data = await config.fetchQuota(file, t);\n              return { name: file.name, quotaKey: getQuotaKey(file), status: 'success', data };\n",
-    )
-    replace_once(
-        path,
-        "              return { name: file.name, status: 'error', error: message, errorStatus };\n",
-        "              return { name: file.name, quotaKey: getQuotaKey(file), status: 'error', error: message, errorStatus };\n",
-    )
-    replace_all(
-        path,
-        "nextState[result.name]",
-        "nextState[result.quotaKey]",
-    )
-    replace_once(
-        path,
-        "    [config, setQuota, t]\n",
-        "    [config, getQuotaKey, setQuota, t]\n",
-    )
-    replace_once(
-        path,
-        "  return { quota, loadQuota };\n",
-        "  return { quota, loadQuota, getQuotaKey };\n",
     )
 
 
@@ -826,8 +718,6 @@ def main() -> None:
     patch_quota_configs(target)
     patch_antigravity_quota_builders(target)
     patch_quota_page(target)
-    patch_quota_loader(target)
-    patch_quota_section(target)
     patch_quota_card(target)
     patch_quota_styles(target)
     patch_supporting_api_and_types(target)

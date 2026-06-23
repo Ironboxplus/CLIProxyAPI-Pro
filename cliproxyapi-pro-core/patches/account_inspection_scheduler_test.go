@@ -307,7 +307,7 @@ func TestAutoActionConfirmationDelaysExecution(t *testing.T) {
 func TestExecuteActionDisablesGeminiCLIPluginVirtualSourceFile(t *testing.T) {
 	authDir := t.TempDir()
 	authPath := filepath.Join(authDir, "gemini-cli.json")
-	if err := os.WriteFile(authPath, []byte(`{"type":"gemini-cli","email":"user@example.com","project_id":"project-a","project_ids":["project-a","project-b"],"gemini_cli_quota":{"projects":{"project-a":{"status":"success","buckets":[{"id":"existing"}]}},"latest_project_id":"project-a"}}`), 0o600); err != nil {
+	if err := os.WriteFile(authPath, []byte(`{"type":"gemini-cli","email":"user@example.com","project_id":"project-a","project_ids":["project-a","project-b"]}`), 0o600); err != nil {
 		t.Fatalf("WriteFile auth error = %v", err)
 	}
 
@@ -361,104 +361,6 @@ func TestExecuteActionDisablesGeminiCLIPluginVirtualSourceFile(t *testing.T) {
 	projectIDs, ok := saved["project_ids"].([]any)
 	if !ok || len(projectIDs) != 2 || projectIDs[0] != "project-a" || projectIDs[1] != "project-b" {
 		t.Fatalf("saved project_ids = %#v, want original source project_ids preserved", saved["project_ids"])
-	}
-}
-
-func TestPersistQuotaStateWritesGeminiCLIProjectMetadataToSourceFile(t *testing.T) {
-	authDir := t.TempDir()
-	authPath := filepath.Join(authDir, "gemini-cli.json")
-	if err := os.WriteFile(authPath, []byte(`{"type":"gemini-cli","email":"user@example.com","project_id":"project-a","project_ids":["project-a","project-b"],"gemini_cli_quota":{"projects":{"project-a":{"status":"success","buckets":[{"id":"existing"}]}},"latest_project_id":"project-a"}}`), 0o600); err != nil {
-		t.Fatalf("WriteFile auth error = %v", err)
-	}
-
-	manager := coreauth.NewManager(nil, nil, nil)
-	primary := &coreauth.Auth{
-		Provider:   "gemini-cli",
-		ID:         "gemini-cli-primary",
-		FileName:   "gemini-cli.json",
-		Metadata:   map[string]any{"type": "gemini-cli", "email": "user@example.com", "project_id": "project-a"},
-		Attributes: map[string]string{"path": authPath, "project_id": "project-a"},
-		Storage:    &accountInspectionTestStorage{},
-	}
-	coreauth.MarkPluginVirtualAuth(primary, authPath, 0)
-	secondary := &coreauth.Auth{
-		Provider:   "gemini-cli",
-		ID:         "gemini-cli-project-b",
-		FileName:   "user-project-b.json",
-		Metadata:   map[string]any{"type": "gemini-cli", "email": "user@example.com", "project_id": "project-b", "virtual": true},
-		Attributes: map[string]string{"path": authPath, "project_id": "project-b", "runtime_only": "true"},
-		Storage:    &accountInspectionTestStorage{},
-	}
-	coreauth.MarkPluginVirtualAuth(secondary, authPath, 1)
-	registeredSecondary, err := manager.Register(context.Background(), secondary)
-	if err != nil {
-		t.Fatalf("Register secondary error = %v", err)
-	}
-	if _, err = manager.Register(context.Background(), primary); err != nil {
-		t.Fatalf("Register primary error = %v", err)
-	}
-
-	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
-	state := quotaSuccessState(map[string]any{"buckets": []any{map[string]any{"id": "standard", "usedPercent": 12.5}}})
-	err = scheduler.persistQuotaStateToAuth(context.Background(), accountInspectionAccount{
-		Auth:      secondary,
-		Provider:  "gemini-cli",
-		FileName:  "user-project-b.json",
-		AuthIndex: registeredSecondary.Index,
-	}, state)
-	if err != nil {
-		t.Fatalf("persistQuotaStateToAuth() error = %v", err)
-	}
-
-	raw, err := os.ReadFile(authPath)
-	if err != nil {
-		t.Fatalf("ReadFile auth error = %v", err)
-	}
-	var saved map[string]any
-	if err = json.Unmarshal(raw, &saved); err != nil {
-		t.Fatalf("saved auth invalid JSON: %v", err)
-	}
-	geminiQuota, ok := saved["gemini_cli_quota"].(map[string]any)
-	if !ok {
-		t.Fatalf("gemini_cli_quota = %#v, want object", saved["gemini_cli_quota"])
-	}
-	projects, ok := geminiQuota["projects"].(map[string]any)
-	if !ok {
-		t.Fatalf("gemini_cli_quota.projects = %#v, want object", geminiQuota["projects"])
-	}
-	if projects["project-b"] == nil {
-		t.Fatalf("project-b quota missing in %#v", projects)
-	}
-	if projects["project-a"] == nil {
-		t.Fatalf("project-a quota was not preserved in %#v", projects)
-	}
-	if geminiQuota["latest_project_id"] != "project-b" {
-		t.Fatalf("latest_project_id = %#v, want project-b", geminiQuota["latest_project_id"])
-	}
-	if saved["project_id"] != "project-a" {
-		t.Fatalf("saved project_id = %#v, want original source project_id preserved", saved["project_id"])
-	}
-	projectIDs, ok := saved["project_ids"].([]any)
-	if !ok || len(projectIDs) != 2 || projectIDs[0] != "project-a" || projectIDs[1] != "project-b" {
-		t.Fatalf("saved project_ids = %#v, want original source project_ids preserved", saved["project_ids"])
-	}
-}
-
-func TestPluginVirtualSourceFileNameUsesPhysicalAuthFile(t *testing.T) {
-	authPath := filepath.Join(t.TempDir(), "gemini-cli.json")
-	auth := &coreauth.Auth{
-		Provider: "gemini-cli",
-		FileName: "user-project-b.json",
-		Attributes: map[string]string{
-			"path":         authPath,
-			"project_id":   "project-b",
-			"runtime_only": "true",
-		},
-	}
-	coreauth.MarkPluginVirtualAuth(auth, authPath, 1)
-
-	if got := pluginVirtualSourceFileName(auth); got != "gemini-cli.json" {
-		t.Fatalf("pluginVirtualSourceFileName() = %q, want gemini-cli.json", got)
 	}
 }
 
@@ -527,50 +429,6 @@ func TestListAuthFilesFromDiskIncludesInspectionAndCodexPlanMetadata(t *testing.
 	}
 	if idTokenEntry["plan_type"] != "pro" || idTokenEntry["chatgpt_account_id"] != "acct-1" || idTokenEntry["chatgpt_subscription_active_until"] != float64(1790000000) {
 		t.Fatalf("id_token entry = %#v, want codex plan/subscription claims", idTokenEntry)
-	}
-}
-
-func TestListAuthFilesFromDiskIncludesGeminiCLIQuotaMetadata(t *testing.T) {
-	authDir := t.TempDir()
-	fileName := "gemini-cli.json"
-	content := map[string]any{
-		"type":        "gemini-cli",
-		"email":       "user@example.com",
-		"project_id":  "project-a",
-		"project_ids": []string{"project-a", "project-b"},
-		"gemini_cli_quota": map[string]any{
-			"latest_project_id": "project-b",
-			"projects": map[string]any{
-				"project-b": map[string]any{
-					"status": "success",
-					"buckets": []any{
-						map[string]any{"id": "gemini-pro-series", "remainingFraction": 0.75},
-					},
-				},
-			},
-		},
-	}
-	raw, err := json.Marshal(content)
-	if err != nil {
-		t.Fatalf("Marshal auth content error = %v", err)
-	}
-	if err = os.WriteFile(filepath.Join(authDir, fileName), raw, 0o600); err != nil {
-		t.Fatalf("WriteFile auth content error = %v", err)
-	}
-
-	h := NewHandlerWithoutConfigFilePath(&config.Config{AuthDir: authDir}, nil)
-	entry := firstAuthFileEntry(t, h)
-
-	projectIDs, ok := entry["project_ids"].([]any)
-	if !ok || len(projectIDs) != 2 || projectIDs[0] != "project-a" || projectIDs[1] != "project-b" {
-		t.Fatalf("project_ids = %#v, want project-a/project-b", entry["project_ids"])
-	}
-	geminiQuota, ok := entry["gemini_cli_quota"].(map[string]any)
-	if !ok {
-		t.Fatalf("gemini_cli_quota = %#v, want object", entry["gemini_cli_quota"])
-	}
-	if geminiQuota["latest_project_id"] != "project-b" {
-		t.Fatalf("latest_project_id = %#v, want project-b", geminiQuota["latest_project_id"])
 	}
 }
 
@@ -939,8 +797,14 @@ func TestBuildXAIBillingSummarySupportsSnakeCaseAndNumericValues(t *testing.T) {
 	}
 }
 
-func TestXAIAPIBaseURLDefaultsToGrokBillingHost(t *testing.T) {
-	if got := xaiAPIBaseURL(nil); got != "https://cli-chat-proxy.grok.com/v1" {
-		t.Fatalf("xaiAPIBaseURL(nil) = %q, want grok proxy host", got)
+func TestXAIInspectionUsesExecutorHTTPRequest(t *testing.T) {
+	if !accountInspectionShouldUseExecutorHTTPRequest(&coreauth.Auth{Provider: "xai"}) {
+		t.Fatal("accountInspectionShouldUseExecutorHTTPRequest(xai) = false, want true")
+	}
+}
+
+func TestXAIBillingURLMatchesUpstreamQuotaConfig(t *testing.T) {
+	if got := xaiBillingURL(); got != "https://cli-chat-proxy.grok.com/v1/billing" {
+		t.Fatalf("xaiBillingURL() = %q, want upstream billing endpoint", got)
 	}
 }

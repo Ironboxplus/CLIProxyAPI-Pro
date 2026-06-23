@@ -1835,7 +1835,7 @@ func accountInspectionShouldUseExecutorHTTPRequest(auth *coreauth.Auth) bool {
 		return false
 	}
 	switch strings.ToLower(strings.TrimSpace(auth.Provider)) {
-	case "gemini-cli":
+	case "gemini-cli", "xai":
 		return true
 	default:
 		return false
@@ -2291,11 +2291,9 @@ func (s *accountInspectionScheduler) inspectKimi(ctx context.Context, account ac
 }
 
 func (s *accountInspectionScheduler) inspectXAI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
-	baseURL := xaiAPIBaseURL(account.Auth)
 	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
-		return s.apiCall(ctx, account.Auth, http.MethodGet, strings.TrimRight(baseURL, "/")+"/billing", map[string]string{
+		return s.apiCall(ctx, account.Auth, http.MethodGet, xaiBillingURL(), map[string]string{
 			"Authorization": "Bearer $TOKEN$",
-			"Accept":        "application/json",
 		}, "", settings.Timeout)
 	})
 	status := intPtr(resp.StatusCode)
@@ -2316,12 +2314,8 @@ func (s *accountInspectionScheduler) inspectXAI(ctx context.Context, account acc
 	return quotaDecision(account, used, billing != nil, settings.UsedPercentThreshold), status, nil
 }
 
-func xaiAPIBaseURL(auth *coreauth.Auth) string {
-	baseURL := firstNonEmptyAuthValue(auth, "base_url", "baseURL", "api_base_url", "apiBaseURL")
-	if baseURL == "" {
-		return "https://cli-chat-proxy.grok.com/v1"
-	}
-	return baseURL
+func xaiBillingURL() string {
+	return "https://cli-chat-proxy.grok.com/v1/billing"
 }
 
 func (s *accountInspectionScheduler) antigravityUserAgent() string {
@@ -2548,41 +2542,11 @@ func writePluginVirtualManagedMetadataToSourceFile(sourcePath string, auth *core
 	if value, ok := auth.Metadata["quota_cache"]; ok {
 		source["quota_cache"] = value
 	}
-	if value, ok := auth.Metadata["gemini_cli_quota"]; ok {
-		source["gemini_cli_quota"] = mergePluginVirtualGeminiCLIQuotaMetadata(source["gemini_cli_quota"], value)
-	}
 	raw, err := json.Marshal(source)
 	if err != nil {
 		return err
 	}
 	return os.WriteFile(sourcePath, append(raw, '\n'), 0o600)
-}
-
-func mergePluginVirtualGeminiCLIQuotaMetadata(existing any, incoming any) any {
-	existingMap, _ := existing.(map[string]any)
-	incomingMap, _ := incoming.(map[string]any)
-	if existingMap == nil || incomingMap == nil {
-		return incoming
-	}
-	merged := cloneAnyMapForInspection(existingMap)
-	for key, value := range incomingMap {
-		if key != "projects" {
-			merged[key] = value
-			continue
-		}
-		existingProjects, _ := merged["projects"].(map[string]any)
-		incomingProjects, _ := value.(map[string]any)
-		if existingProjects == nil || incomingProjects == nil {
-			merged[key] = value
-			continue
-		}
-		projects := cloneAnyMapForInspection(existingProjects)
-		for projectID, projectState := range incomingProjects {
-			projects[projectID] = projectState
-		}
-		merged[key] = projects
-	}
-	return merged
 }
 
 func (s *accountInspectionScheduler) updatePluginVirtualRuntimeAuths(ctx context.Context, sourceAuth *coreauth.Auth, mutate func(*coreauth.Auth)) {
@@ -3214,25 +3178,9 @@ func (s *accountInspectionScheduler) persistQuotaState(ctx context.Context, acco
 	if err := persistQuotaState(ctx, account.Provider, account.FileName, state); err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 配额缓存写入失败：%s", account.identity(), err.Error()))
 	}
-	if sourceFileName := pluginVirtualSourceFileName(account.Auth); sourceFileName != "" && sourceFileName != account.FileName {
-		if err := persistQuotaState(ctx, account.Provider, sourceFileName, state); err != nil {
-			s.appendLog("warning", fmt.Sprintf("%s 源认证文件配额缓存写入失败：%s", account.identity(), err.Error()))
-		}
-	}
 	if err := s.persistQuotaStateToAuth(ctx, account, state); err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 配额状态写入认证文件失败：%s", account.identity(), err.Error()))
 	}
-}
-
-func pluginVirtualSourceFileName(auth *coreauth.Auth) string {
-	if auth == nil || !coreauth.IsPluginVirtualAuth(auth) {
-		return ""
-	}
-	sourcePath := pluginVirtualSourcePath(auth)
-	if sourcePath == "" {
-		return ""
-	}
-	return filepath.Base(sourcePath)
 }
 
 func persistQuotaState(ctx context.Context, provider string, fileName string, state map[string]any) error {
@@ -3254,36 +3202,8 @@ func (s *accountInspectionScheduler) persistQuotaStateToAuth(ctx context.Context
 			auth.Metadata = make(map[string]any)
 		}
 		auth.Metadata["quota_cache"] = stateCopy
-		if account.Provider == "gemini-cli" {
-			persistGeminiCLIQuotaMetadata(auth.Metadata, account.Auth, stateCopy)
-		}
 		auth.UpdatedAt = time.Now()
 	})
-}
-
-func persistGeminiCLIQuotaMetadata(metadata map[string]any, accountAuth *coreauth.Auth, state map[string]any) {
-	if metadata == nil || state == nil {
-		return
-	}
-	projectID := geminiCLIProjectID(accountAuth)
-	if projectID == "" {
-		projectID = strings.TrimSpace(stringFromAny(metadata["project_id"]))
-	}
-	geminiQuota, _ := metadata["gemini_cli_quota"].(map[string]any)
-	if geminiQuota == nil {
-		geminiQuota = make(map[string]any)
-	}
-	geminiQuota["latest"] = state
-	if projectID != "" {
-		projects, _ := geminiQuota["projects"].(map[string]any)
-		if projects == nil {
-			projects = make(map[string]any)
-		}
-		projects[projectID] = state
-		geminiQuota["projects"] = projects
-		geminiQuota["latest_project_id"] = projectID
-	}
-	metadata["gemini_cli_quota"] = geminiQuota
 }
 
 func buildAntigravityGroups(body string) ([]map[string]any, error) {

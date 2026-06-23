@@ -67,7 +67,7 @@ type ManualAccountInspectionAction = Exclude<AccountInspectionAction, 'keep'>;
 
 type QuotaAccountStatsState = Pick<
   ReturnType<typeof useQuotaStore.getState>,
-  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'geminiCliQuota' | 'kimiQuota' | 'xaiQuota'
+  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'kimiQuota' | 'xaiQuota'
 >;
 
 type HealthCounts = {
@@ -705,8 +705,6 @@ const isProviderQuotaLow = (
       return isQuotaLowState(quotaStore.claudeQuota[fileName], usedPercentThreshold);
     case 'codex':
       return isQuotaLowState(quotaStore.codexQuota[fileName], usedPercentThreshold);
-    case 'gemini-cli':
-      return isQuotaLowState(quotaStore.geminiCliQuota[fileName], usedPercentThreshold);
     case 'kimi':
       return isQuotaLowState(quotaStore.kimiQuota[fileName], usedPercentThreshold);
     case 'xai':
@@ -1555,7 +1553,6 @@ export function AccountInspectionPage() {
   const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);
   const claudeQuota = useQuotaStore((state) => state.claudeQuota);
   const codexQuota = useQuotaStore((state) => state.codexQuota);
-  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);
   const kimiQuota = useQuotaStore((state) => state.kimiQuota);
   const xaiQuota = useQuotaStore((state) => state.xaiQuota);
 
@@ -2208,8 +2205,8 @@ export function AccountInspectionPage() {
 
 
   const quotaStore = useMemo(
-    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota }),
-    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, kimiQuota, xaiQuota]
+    () => ({ antigravityQuota, claudeQuota, codexQuota, kimiQuota, xaiQuota }),
+    [antigravityQuota, claudeQuota, codexQuota, kimiQuota, xaiQuota]
   );
 
   useEffect(() => {
