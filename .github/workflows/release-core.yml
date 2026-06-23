@@ -116,9 +116,6 @@ jobs:
           path: customizations-repo
           fetch-depth: 1
 
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -133,7 +130,7 @@ jobs:
         uses: docker/build-push-action@v6
         with:
           context: ./customizations-repo/cliproxyapi-pro-core
-          platforms: linux/amd64,linux/arm64
+          platforms: linux/amd64
           build-args: |
             CLIPROXY_VERSION=${{ needs.check-version.outputs.core_tag }}
             CLIPROXY_BUILD_VERSION=${{ needs.check-version.outputs.release_tag }}
@@ -163,28 +160,12 @@ jobs:
             asset_arch: amd64
             archive_format: tar.gz
             asset_suffix: ""
-          - target: darwin-arm64
-            kind: hosted-plugin
-            runner: macos-15
-            goos: darwin
-            goarch: arm64
-            asset_arch: aarch64
-            archive_format: tar.gz
-            asset_suffix: ""
           - target: windows-amd64
             kind: hosted-plugin
             runner: windows-latest
             goos: windows
             goarch: amd64
             asset_arch: amd64
-            archive_format: zip
-            asset_suffix: ""
-          - target: windows-arm64
-            kind: hosted-plugin
-            runner: windows-11-arm
-            goos: windows
-            goarch: arm64
-            asset_arch: aarch64
             archive_format: zip
             asset_suffix: ""
           - target: linux-amd64
@@ -196,29 +177,12 @@ jobs:
             archive_format: tar.gz
             asset_suffix: ""
             manylinux_image: quay.io/pypa/manylinux2014_x86_64
-          - target: linux-arm64
-            kind: linux-glibc-plugin
-            runner: ubuntu-24.04-arm
-            goos: linux
-            goarch: arm64
-            asset_arch: aarch64
-            archive_format: tar.gz
-            asset_suffix: ""
-            manylinux_image: quay.io/pypa/manylinux2014_aarch64
           - target: linux-amd64-no-plugin
             kind: no-plugin
             runner: ubuntu-latest
             goos: linux
             goarch: amd64
             asset_arch: amd64
-            archive_format: tar.gz
-            asset_suffix: _no-plugin
-          - target: linux-arm64-no-plugin
-            kind: no-plugin
-            runner: ubuntu-latest
-            goos: linux
-            goarch: arm64
-            asset_arch: aarch64
             archive_format: tar.gz
             asset_suffix: _no-plugin
           - target: freebsd-amd64
@@ -235,14 +199,6 @@ jobs:
             goos: freebsd
             goarch: amd64
             asset_arch: amd64
-            archive_format: tar.gz
-            asset_suffix: _no-plugin
-          - target: freebsd-arm64-no-plugin
-            kind: no-plugin
-            runner: ubuntu-latest
-            goos: freebsd
-            goarch: arm64
-            asset_arch: aarch64
             archive_format: tar.gz
             asset_suffix: _no-plugin
 
@@ -766,234 +722,10 @@ jobs:
             --repo "${GITHUB_REPOSITORY}" \
             --clobber
 
-  backup-usage-statistics:
-    needs:
-      - check-version
-      - publish-release
-    if: needs.check-version.outputs.should_release == 'true' && needs.publish-release.result == 'success'
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Backup usage statistics to WebDAV
-        continue-on-error: true
-        env:
-          USAGE_BACKUP_TARGETS: ${{ secrets.CLIPROXY_USAGE_BACKUP_TARGETS }}
-        run: |
-          set -euo pipefail
-
-          TIMESTAMP=$(date -u +"%Y%m%d_%H%M%S")
-
-          if [ -z "$USAGE_BACKUP_TARGETS" ]; then
-            echo "⚠️ CLIPROXY_USAGE_BACKUP_TARGETS is not configured. Skipping usage backup."
-            exit 0
-          fi
-
-          backup_target() {
-            local name="$1"
-            local api_url="$2"
-            local management_password="$3"
-            local webdav_url="$4"
-            local webdav_username="$5"
-            local webdav_password="$6"
-            local filename="usage-export-${TIMESTAMP}.jsonl"
-
-            if [ -z "$api_url" ] || [ -z "$management_password" ] || [ -z "$webdav_url" ] || [ -z "$webdav_username" ] || [ -z "$webdav_password" ]; then
-              echo "⚠️ Usage backup target '$name' is missing required configuration. Skipping."
-              return 0
-            fi
-
-            echo "Exporting usage statistics for $name..."
-            if ! curl -sf -H "Authorization: Bearer $management_password" \
-              "$api_url/v0/management/usage/export" \
-              -o "$filename"; then
-              echo "⚠️ Failed to export usage statistics for $name. Skipping."
-              rm -f "$filename"
-              return 0
-            fi
-
-            echo "Uploading $filename to WebDAV for $name..."
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -T "$filename" \
-              -u "$webdav_username:$webdav_password" \
-              "$webdav_url/$filename" || echo "000")
-
-            if [ "$HTTP_STATUS" -ge 200 ] && [ "$HTTP_STATUS" -lt 300 ]; then
-              echo "✅ Usage backup uploaded successfully for $name."
-            else
-              echo "⚠️ Failed to upload usage backup for $name. HTTP Status: $HTTP_STATUS. Skipping cleanup."
-              rm -f "$filename"
-              return 0
-            fi
-
-            echo "Cleaning up old backups for $name (keeping last 7)..."
-            OLD_FILES=$(curl -s -X PROPFIND \
-              -u "$webdav_username:$webdav_password" \
-              "$webdav_url/" \
-              -H "Depth: 1" | grep -oP 'usage-export-[0-9_]+\.(jsonl|json)' | sort -r | tail -n +8 || true)
-
-            for OLD_FILE in $OLD_FILES; do
-              echo "Deleting $OLD_FILE for $name..."
-              curl -s -X DELETE \
-                -u "$webdav_username:$webdav_password" \
-                "$webdav_url/$OLD_FILE" >/dev/null || true
-            done
-
-            rm -f "$filename"
-            echo "✅ Cleanup completed for $name."
-          }
-
-          if ! echo "$USAGE_BACKUP_TARGETS" | jq -e 'type == "array"' >/dev/null; then
-            echo "⚠️ CLIPROXY_USAGE_BACKUP_TARGETS must be a JSON array. Skipping usage backup."
-            exit 0
-          fi
-
-          echo "$USAGE_BACKUP_TARGETS" | jq -c '.[]' | while IFS= read -r target; do
-            backup_target \
-              "$(echo "$target" | jq -r 'if type == "object" then (.name // "default") else "default" end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.api_url // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.management_password // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_url // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_username // empty) else empty end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.webdav_password // empty) else empty end')"
-          done
-
-          echo "✅ Usage backup completed."
-
-  trigger-render-deployment:
-    needs:
-      - check-version
-      - publish-release
-      - backup-usage-statistics
-    if: needs.check-version.outputs.should_release == 'true' && needs.publish-release.result == 'success'
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Trigger Render Deployment
-        continue-on-error: true
-        env:
-          RENDER_DEPLOY_HOOKS: ${{ secrets.CLIPROXY_RENDER_DEPLOY_HOOKS }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "$RENDER_DEPLOY_HOOKS" ]; then
-            echo "⚠️ CLIPROXY_RENDER_DEPLOY_HOOKS is not configured. Skipping Render deployment."
-            exit 0
-          fi
-
-          trigger_render_deploy() {
-            local name="$1"
-            local hook_url="$2"
-
-            if [ -z "$hook_url" ]; then
-              echo "⚠️ Render deployment target '$name' is missing hook URL. Skipping."
-              return 0
-            fi
-
-            echo "Triggering Render deployment for $name..."
-            HTTP_STATUS=$(curl -s -o /dev/null -w "%{http_code}" -X POST "$hook_url" || echo "000")
-
-            if [ "$HTTP_STATUS" -eq 200 ]; then
-              echo "✅ Render deployment triggered successfully for $name."
-            else
-              echo "⚠️ Failed to trigger Render deployment for $name. HTTP Status: $HTTP_STATUS. Continuing."
-              return 0
-            fi
-          }
-
-          if ! echo "$RENDER_DEPLOY_HOOKS" | jq -e 'type == "array"' >/dev/null; then
-            echo "⚠️ CLIPROXY_RENDER_DEPLOY_HOOKS must be a JSON array. Skipping Render deployment."
-            exit 0
-          fi
-
-          echo "$RENDER_DEPLOY_HOOKS" | jq -c '.[]' | while IFS= read -r target; do
-            trigger_render_deploy \
-              "$(echo "$target" | jq -r 'if type == "object" then (.name // "default") else "default" end')" \
-              "$(echo "$target" | jq -r 'if type == "object" then (.hook_url // .url // empty) else empty end')"
-          done
-
-  send-telegram-notification:
-    needs:
-      - check-version
-      - publish-release
-      - trigger-render-deployment
-    if: needs.check-version.outputs.should_release == 'true' && needs.publish-release.result == 'success'
-    runs-on: ubuntu-latest
-
-    permissions:
-      contents: read
-
-    steps:
-      - name: Send Telegram notification
-        env:
-          GITHUB_REPO: ${{ github.repository }}
-          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
-          MANAGEMENT_VERSION: ${{ needs.check-version.outputs.management_version }}
-          DOCKER_USERNAME: ${{ secrets.DOCKER_USERNAME }}
-          CHAT_ID: ${{ secrets.TELEGRAM_CHAT_ID }}
-          BOT_TOKEN: ${{ secrets.TELEGRAM_BOT_TOKEN }}
-        run: |
-          cat << 'EOF' > telegram_notify.py
-          import os
-          import html
-          import json
-          import urllib.request
-
-          repo = os.environ.get('GITHUB_REPO', '')
-          tag = os.environ.get('RELEASE_TAG', 'Unknown')
-          core_version = tag
-          management_version = f"v{os.environ.get('MANAGEMENT_VERSION', 'Unknown')}-pro"
-          chat_id = os.environ.get('CHAT_ID')
-          bot_token = os.environ.get('BOT_TOKEN')
-          docker_username = os.environ.get('DOCKER_USERNAME', 'unknown')
-          docker_url = f'https://hub.docker.com/r/{docker_username}/cliproxyapi-pro/tags'
-          release_url = f'https://github.com/{repo}/releases/tag/{tag}'
-
-          full_text = (
-              '🚀 <b>New CLIProxyAPI Pro Release Published!</b>\n\n'
-              f'📦 <b>Release:</b> <code>{html.escape(tag)}</code>\n'
-              f'🧩 <b>Core:</b> <code>{html.escape(core_version)}</code>\n'
-              f'🖥️ <b>Management:</b> <code>{html.escape(management_version)}</code>\n'
-              f'🐳 <a href="{html.escape(docker_url)}">DockerHub</a>\n'
-              f'📝 <a href="{html.escape(release_url)}">Release notes</a>'
-          )
-
-          payload = {
-              'chat_id': chat_id,
-              'text': full_text,
-              'parse_mode': 'HTML',
-              'disable_web_page_preview': True,
-          }
-
-          req = urllib.request.Request(
-              f'https://api.telegram.org/bot{bot_token}/sendMessage',
-              data=json.dumps(payload).encode('utf-8'),
-              headers={'Content-Type': 'application/json'},
-          )
-
-          try:
-              if bot_token and chat_id:
-                  with urllib.request.urlopen(req):
-                      print('✅ Notification sent.')
-              else:
-                  print('⚠️ Telegram details missing.')
-          except Exception as e:
-              print(f'❌ Error: {e}')
-          EOF
-
-          python3 telegram_notify.py
-
   cleanup-runs:
     runs-on: ubuntu-latest
     needs:
       - publish-release
-      - backup-usage-statistics
-      - trigger-render-deployment
-      - send-telegram-notification
     if: always() && needs.publish-release.result == 'success'
     permissions:
       actions: write
