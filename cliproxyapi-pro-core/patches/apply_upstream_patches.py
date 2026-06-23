@@ -1514,6 +1514,9 @@ func (m *Manager) refreshForInspection(ctx context.Context, id string, force boo
 	updated.LastRefreshedAt = now
 	updated.NextRefreshAfter = time.Time{}
 	updated.LastError = nil
+	if updated.Metadata != nil {
+		delete(updated.Metadata, "last_error")
+	}
 	updated.UpdatedAt = now
 	if m.shouldRefreshForInspection(updated, now) {
 		updated.NextRefreshAfter = now.Add(refreshIneffectiveBackoff)
