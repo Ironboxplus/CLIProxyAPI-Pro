@@ -449,7 +449,7 @@ def patch_quota_section(target: Path) -> None:
     replace_once(
         path,
         "      const nextState: Record<string, TState> = {};\n      filteredFiles.forEach((file) => {\n        const cached = prev[file.name];\n        if (cached) {\n          nextState[file.name] = cached;\n        }\n      });\n      return nextState;\n",
-        "      const nextState: Record<string, TState> = {};\n      filteredFiles.forEach((file) => {\n        const key = getQuotaKey(file, prev);\n        const cached = prev[key] ?? config.resolveInitialQuotaState?.(file) ?? undefined;\n        if (cached) {\n          nextState[key] = cached;\n        }\n      });\n      return nextState;\n",
+        "      const nextState: Record<string, TState> = {};\n      let changed = false;\n      filteredFiles.forEach((file) => {\n        const key = getQuotaKey(file, prev);\n        const cached = prev[key] ?? config.resolveInitialQuotaState?.(file) ?? undefined;\n        if (cached) {\n          nextState[key] = cached;\n          if (prev[key] !== cached) changed = true;\n        }\n      });\n      const prevKeys = Object.keys(prev);\n      if (!changed && prevKeys.length === Object.keys(nextState).length && prevKeys.every((key) => prev[key] === nextState[key])) {\n        return prev;\n      }\n      return nextState;\n",
     )
     replace_once(
         path,
@@ -508,7 +508,7 @@ def patch_quota_loader(target: Path) -> None:
     replace_once(
         path,
         "  const loadingRef = useRef(false);\n  const requestIdRef = useRef(0);\n",
-        "  const loadingRef = useRef(false);\n  const requestIdRef = useRef(0);\n\n  const getQuotaKey = useCallback(\n    (file: AuthFileItem, quotaMap: Record<string, TState> = quota) =>\n      config.resolveQuotaKey?.(file, quotaMap) ?? file.name,\n    [config, quota]\n  );\n",
+        "  const loadingRef = useRef(false);\n  const requestIdRef = useRef(0);\n  const quotaRef = useRef(quota);\n  quotaRef.current = quota;\n\n  const getQuotaKey = useCallback(\n    (file: AuthFileItem, quotaMap?: Record<string, TState>) =>\n      config.resolveQuotaKey?.(file, quotaMap ?? quotaRef.current) ?? file.name,\n    [config]\n  );\n",
     )
     replace_once(
         path,
