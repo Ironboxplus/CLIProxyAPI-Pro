@@ -223,15 +223,20 @@ write_text(ROOT / 'internal/pluginstore/autoinstall.go', f'''package pluginstore
 import (
 \t"context"
 \t"net/http"
+\t"os"
+\t"path/filepath"
+\t"regexp"
 \t"runtime"
 \t"sort"
 \t"strings"
 
 \t"{import_path('internal/config')}"
-\t"{import_path('internal/pluginhost')}"
 \t"{import_path('sdk/proxyutil')}"
 \tlog "github.com/sirupsen/logrus"
+\t"golang.org/x/sys/cpu"
 )
+
+var autoInstallPluginIDPattern = regexp.MustCompile(`^[A-Za-z0-9][A-Za-z0-9._-]{{0,127}}$`)
 
 // AutoInstallWarning describes a non-fatal plugin auto-install issue.
 type AutoInstallWarning struct {{
@@ -408,7 +413,7 @@ func enabledConfiguredPluginIDs(cfg *config.Config) []string {{
 \t\tif id == "" || item.Enabled == nil || !*item.Enabled {{
 \t\t\tcontinue
 \t\t}}
-\t\tif !pluginhost.ValidatePluginID(id) {{
+\t\tif !autoInstallValidatePluginID(id) {{
 \t\t\tcontinue
 \t\t}}
 \t\tids = append(ids, id)
@@ -418,7 +423,7 @@ func enabledConfiguredPluginIDs(cfg *config.Config) []string {{
 }}
 
 func installedPluginIDs(pluginsDir string) (map[string]struct{{}}, error) {{
-\tfiles, err := pluginhost.DiscoverPluginFiles(pluginsDir)
+\tfiles, err := autoInstallDiscoverPluginFiles(pluginsDir)
 \tif err != nil {{
 \t\treturn nil, err
 \t}}
@@ -427,6 +432,106 @@ func installedPluginIDs(pluginsDir string) (map[string]struct{{}}, error) {{
 \t\tout[file.ID] = struct{{}}{{}}
 \t}}
 \treturn out, nil
+}}
+
+type autoInstallPluginFile struct {{
+\tID string
+\tPath string
+}}
+
+func autoInstallValidatePluginID(id string) bool {{
+\treturn autoInstallPluginIDPattern.MatchString(id)
+}}
+
+func autoInstallPluginIDFromPath(path string) string {{
+\tbase := filepath.Base(path)
+\tlowerBase := strings.ToLower(base)
+\tfor _, extension := range []string{{".so", ".dylib", ".dll"}} {{
+\t\tif strings.HasSuffix(lowerBase, extension) {{
+\t\t\treturn base[:len(base)-len(extension)]
+\t\t}}
+\t}}
+\treturn base
+}}
+
+func autoInstallPluginExtension(goos string) string {{
+\tswitch goos {{
+\tcase "darwin":
+\t\treturn ".dylib"
+\tcase "windows":
+\t\treturn ".dll"
+\tdefault:
+\t\treturn ".so"
+\t}}
+}}
+
+func autoInstallDiscoverPluginFiles(root string) ([]autoInstallPluginFile, error) {{
+\troot = strings.TrimSpace(root)
+\tif root == "" {{
+\t\troot = "plugins"
+\t}}
+
+\tcandidates := autoInstallCandidateDirs(root, runtime.GOOS, runtime.GOARCH, autoInstallCPUVariant())
+\textension := autoInstallPluginExtension(runtime.GOOS)
+\tselected := make([]autoInstallPluginFile, 0)
+\tseen := make(map[string]struct{{}})
+\tfor _, dir := range candidates {{
+\t\tentries, errReadDir := os.ReadDir(dir)
+\t\tif errReadDir != nil {{
+\t\t\tif os.IsNotExist(errReadDir) {{
+\t\t\t\tcontinue
+\t\t\t}}
+\t\t\treturn nil, errReadDir
+\t\t}}
+\t\tfiles := make([]string, 0, len(entries))
+\t\tfor _, entry := range entries {{
+\t\t\tif entry == nil || !entry.Type().IsRegular() {{
+\t\t\t\tcontinue
+\t\t\t}}
+\t\t\tif strings.HasSuffix(strings.ToLower(entry.Name()), extension) {{
+\t\t\t\tfiles = append(files, filepath.Join(dir, entry.Name()))
+\t\t\t}}
+\t\t}}
+\t\tsort.Strings(files)
+\t\tfor _, path := range files {{
+\t\t\tid := autoInstallPluginIDFromPath(path)
+\t\t\tif !autoInstallValidatePluginID(id) {{
+\t\t\t\tcontinue
+\t\t\t}}
+\t\t\tif _, exists := seen[id]; exists {{
+\t\t\t\tcontinue
+\t\t\t}}
+\t\t\tseen[id] = struct{{}}{{}}
+\t\t\tselected = append(selected, autoInstallPluginFile{{ID: id, Path: path}})
+\t\t}}
+\t}}
+\treturn selected, nil
+}}
+
+func autoInstallCandidateDirs(root, goos, goarch, variant string) []string {{
+\tdirs := make([]string, 0, 3)
+\tif variant != "" {{
+\t\tdirs = append(dirs, filepath.Join(root, goos, goarch+"-"+variant))
+\t}}
+\tdirs = append(dirs, filepath.Join(root, goos, goarch))
+\tdirs = append(dirs, root)
+\treturn dirs
+}}
+
+func autoInstallCPUVariant() string {{
+\tif runtime.GOARCH != "amd64" {{
+\t\treturn ""
+\t}}
+\tif cpu.X86.HasAVX512F && cpu.X86.HasAVX512BW && cpu.X86.HasAVX512CD && cpu.X86.HasAVX512DQ && cpu.X86.HasAVX512VL {{
+\t\treturn "v4"
+\t}}
+\tif cpu.X86.HasAVX && cpu.X86.HasAVX2 && cpu.X86.HasBMI1 && cpu.X86.HasBMI2 && cpu.X86.HasFMA {{
+\t\treturn "v3"
+\t}}
+\tif cpu.X86.HasSSE3 && cpu.X86.HasSSSE3 && cpu.X86.HasSSE41 && cpu.X86.HasSSE42 && cpu.X86.HasPOPCNT {{
+\t\treturn "v2"
+\t}}
+\treturn "v1"
 }}
 
 func autoInstallHTTPClient(proxyURL string) HTTPDoer {{
@@ -460,7 +565,6 @@ import (
 \t"testing"
 
 \t"{import_path('internal/config')}"
-\t"{import_path('internal/pluginhost')}"
 )
 
 type autoInstallFakeDoer map[string]string
@@ -541,7 +645,7 @@ func TestEnsureConfiguredPluginsInstalledSkipsInstalledPlugin(t *testing.T) {{
 \tif err := os.MkdirAll(targetDir, 0o755); err != nil {{
 \t\tt.Fatalf("MkdirAll() error = %v", err)
 \t}}
-\tif err := os.WriteFile(filepath.Join(targetDir, "sample-provider"+pluginhost.PluginExtension(runtime.GOOS)), []byte("plugin"), 0o755); err != nil {{
+\tif err := os.WriteFile(filepath.Join(targetDir, "sample-provider"+autoInstallPluginExtension(runtime.GOOS)), []byte("plugin"), 0o755); err != nil {{
 \t\tt.Fatalf("WriteFile() error = %v", err)
 \t}}
 \tcfg := &config.Config{{
@@ -1209,6 +1313,274 @@ redisqueue_plugin = ROOT / 'internal/redisqueue/plugin.go'
 redisqueue_usage_toggle = ROOT / 'internal/redisqueue/usage_toggle.go'
 write_text(redisqueue_plugin, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(patch_dir / 'redisqueue_plugin.go')))
 write_text(redisqueue_usage_toggle, read_text(patch_dir / 'redisqueue_usage_toggle.go'))
+redisqueue_plugin_test = ROOT / 'internal/redisqueue/plugin_test.go'
+if redisqueue_plugin_test.exists():
+    text = read_text(redisqueue_plugin_test)
+    text = text.replace(
+        f'internallogging "{import_path("internal/logging")}"',
+        f'"{import_path("internal/requestmeta")}"',
+    )
+    text = text.replace('internallogging.', 'requestmeta.')
+    write_text(redisqueue_plugin_test, text)
+
+(ROOT / 'internal/requestmeta').mkdir(parents=True, exist_ok=True)
+write_text(ROOT / 'internal/requestmeta/requestid.go', f'''package requestmeta
+
+import (
+\t"context"
+\t"crypto/rand"
+\t"encoding/hex"
+\t"strings"
+)
+
+type requestIDKey struct{{}}
+
+// GenerateRequestID creates a new 8-character hex request ID.
+func GenerateRequestID() string {{
+\tb := make([]byte, 4)
+\tif _, err := rand.Read(b); err != nil {{
+\t\treturn "00000000"
+\t}}
+\treturn hex.EncodeToString(b)
+}}
+
+// WithRequestID returns a new context with the request ID attached.
+func WithRequestID(ctx context.Context, requestID string) context.Context {{
+\tif ctx == nil {{
+\t\tctx = context.Background()
+\t}}
+\trequestID = strings.TrimSpace(requestID)
+\tif requestID == "" {{
+\t\treturn ctx
+\t}}
+\treturn context.WithValue(ctx, requestIDKey{{}}, requestID)
+}}
+
+// GetRequestID retrieves the request ID from the context.
+func GetRequestID(ctx context.Context) string {{
+\tif ctx == nil {{
+\t\treturn ""
+\t}}
+\tif id, ok := ctx.Value(requestIDKey{{}}).(string); ok {{
+\t\treturn strings.TrimSpace(id)
+\t}}
+\treturn ""
+}}
+''')
+
+write_text(ROOT / 'internal/requestmeta/response.go', f'''package requestmeta
+
+import (
+\t"context"
+\t"net/http"
+\t"strings"
+\t"sync"
+\t"sync/atomic"
+)
+
+type endpointKey struct{{}}
+type responseStatusKey struct{{}}
+type responseHeadersKey struct{{}}
+
+type responseStatusHolder struct {{
+\tstatus atomic.Int32
+}}
+
+type responseHeadersHolder struct {{
+\tmu      sync.RWMutex
+\theaders http.Header
+}}
+
+func WithEndpoint(ctx context.Context, endpoint string) context.Context {{
+\tif ctx == nil {{
+\t\tctx = context.Background()
+\t}}
+\tendpoint = strings.TrimSpace(endpoint)
+\tif endpoint == "" {{
+\t\treturn ctx
+\t}}
+\treturn context.WithValue(ctx, endpointKey{{}}, endpoint)
+}}
+
+func GetEndpoint(ctx context.Context) string {{
+\tif ctx == nil {{
+\t\treturn ""
+\t}}
+\tif endpoint, ok := ctx.Value(endpointKey{{}}).(string); ok {{
+\t\treturn strings.TrimSpace(endpoint)
+\t}}
+\treturn ""
+}}
+
+func WithResponseStatusHolder(ctx context.Context) context.Context {{
+\tif ctx == nil {{
+\t\tctx = context.Background()
+\t}}
+\tif holder, ok := ctx.Value(responseStatusKey{{}}).(*responseStatusHolder); ok && holder != nil {{
+\t\treturn ctx
+\t}}
+\treturn context.WithValue(ctx, responseStatusKey{{}}, &responseStatusHolder{{}})
+}}
+
+func WithResponseHeadersHolder(ctx context.Context) context.Context {{
+\tif ctx == nil {{
+\t\tctx = context.Background()
+\t}}
+\tif holder, ok := ctx.Value(responseHeadersKey{{}}).(*responseHeadersHolder); ok && holder != nil {{
+\t\treturn ctx
+\t}}
+\treturn context.WithValue(ctx, responseHeadersKey{{}}, &responseHeadersHolder{{}})
+}}
+
+func SetResponseStatus(ctx context.Context, status int) {{
+\tif ctx == nil || status <= 0 {{
+\t\treturn
+\t}}
+\tholder, ok := ctx.Value(responseStatusKey{{}}).(*responseStatusHolder)
+\tif !ok || holder == nil {{
+\t\treturn
+\t}}
+\tholder.status.Store(int32(status))
+}}
+
+func SetResponseHeaders(ctx context.Context, headers http.Header) {{
+\tif ctx == nil {{
+\t\treturn
+\t}}
+\tholder, ok := ctx.Value(responseHeadersKey{{}}).(*responseHeadersHolder)
+\tif !ok || holder == nil {{
+\t\treturn
+\t}}
+\tholder.mu.Lock()
+\tdefer holder.mu.Unlock()
+\tholder.headers = cloneHTTPHeader(headers)
+}}
+
+func GetResponseStatus(ctx context.Context) int {{
+\tif ctx == nil {{
+\t\treturn 0
+\t}}
+\tholder, ok := ctx.Value(responseStatusKey{{}}).(*responseStatusHolder)
+\tif !ok || holder == nil {{
+\t\treturn 0
+\t}}
+\treturn int(holder.status.Load())
+}}
+
+func GetResponseHeaders(ctx context.Context) http.Header {{
+\tif ctx == nil {{
+\t\treturn nil
+\t}}
+\tholder, ok := ctx.Value(responseHeadersKey{{}}).(*responseHeadersHolder)
+\tif !ok || holder == nil {{
+\t\treturn nil
+\t}}
+\tholder.mu.RLock()
+\tdefer holder.mu.RUnlock()
+\treturn cloneHTTPHeader(holder.headers)
+}}
+
+func cloneHTTPHeader(src http.Header) http.Header {{
+\tif len(src) == 0 {{
+\t\treturn nil
+\t}}
+\tdst := make(http.Header, len(src))
+\tfor key, values := range src {{
+\t\tdst[key] = append([]string(nil), values...)
+\t}}
+\treturn dst
+}}
+''')
+
+write_text(ROOT / 'internal/logging/requestid.go', f'''package logging
+
+import (
+\t"context"
+
+\t"github.com/gin-gonic/gin"
+\t"{import_path('internal/requestmeta')}"
+)
+
+// ginRequestIDKey is the Gin context key for request IDs.
+const ginRequestIDKey = "__request_id__"
+
+// GenerateRequestID creates a new 8-character hex request ID.
+func GenerateRequestID() string {{
+\treturn requestmeta.GenerateRequestID()
+}}
+
+// WithRequestID returns a new context with the request ID attached.
+func WithRequestID(ctx context.Context, requestID string) context.Context {{
+\treturn requestmeta.WithRequestID(ctx, requestID)
+}}
+
+// GetRequestID retrieves the request ID from the context.
+func GetRequestID(ctx context.Context) string {{
+\treturn requestmeta.GetRequestID(ctx)
+}}
+
+// SetGinRequestID stores the request ID in the Gin context.
+func SetGinRequestID(c *gin.Context, requestID string) {{
+\tif c != nil {{
+\t\tc.Set(ginRequestIDKey, requestID)
+\t}}
+}}
+
+// GetGinRequestID retrieves the request ID from the Gin context.
+func GetGinRequestID(c *gin.Context) string {{
+\tif c == nil {{
+\t\treturn ""
+\t}}
+\tif id, exists := c.Get(ginRequestIDKey); exists {{
+\t\tif s, ok := id.(string); ok {{
+\t\t\treturn s
+\t\t}}
+\t}}
+\treturn ""
+}}
+''')
+
+write_text(ROOT / 'internal/logging/requestmeta.go', f'''package logging
+
+import (
+\t"context"
+\t"net/http"
+
+\t"{import_path('internal/requestmeta')}"
+)
+
+func WithEndpoint(ctx context.Context, endpoint string) context.Context {{
+\treturn requestmeta.WithEndpoint(ctx, endpoint)
+}}
+
+func GetEndpoint(ctx context.Context) string {{
+\treturn requestmeta.GetEndpoint(ctx)
+}}
+
+func WithResponseStatusHolder(ctx context.Context) context.Context {{
+\treturn requestmeta.WithResponseStatusHolder(ctx)
+}}
+
+func WithResponseHeadersHolder(ctx context.Context) context.Context {{
+\treturn requestmeta.WithResponseHeadersHolder(ctx)
+}}
+
+func SetResponseStatus(ctx context.Context, status int) {{
+\trequestmeta.SetResponseStatus(ctx, status)
+}}
+
+func SetResponseHeaders(ctx context.Context, headers http.Header) {{
+\trequestmeta.SetResponseHeaders(ctx, headers)
+}}
+
+func GetResponseStatus(ctx context.Context) int {{
+\treturn requestmeta.GetResponseStatus(ctx)
+}}
+
+func GetResponseHeaders(ctx context.Context) http.Header {{
+\treturn requestmeta.GetResponseHeaders(ctx)
+}}
+''')
 
 add_go_import(server, '"' + import_path('internal/config') + '"\n', '\t"' + import_path('internal/embeddedusage') + '"\n')
 
@@ -1514,6 +1886,9 @@ func (m *Manager) refreshForInspection(ctx context.Context, id string, force boo
 	updated.LastRefreshedAt = now
 	updated.NextRefreshAfter = time.Time{}
 	updated.LastError = nil
+	if updated.Metadata != nil {
+		delete(updated.Metadata, "last_error")
+	}
 	updated.UpdatedAt = now
 	if m.shouldRefreshForInspection(updated, now) {
 		updated.NextRefreshAfter = now.Add(refreshIneffectiveBackoff)
@@ -1531,9 +1906,15 @@ subprocess.run([
     'gofmt',
     '-w',
     'cmd/server/main.go',
+    'internal/logging/requestid.go',
+    'internal/logging/requestmeta.go',
     'internal/pluginhost/gemini_cli_storage_compat.go',
     'internal/pluginhost/gemini_cli_storage_compat_test.go',
     'internal/pluginstore/autoinstall.go',
     'internal/pluginstore/autoinstall_test.go',
+    'internal/redisqueue/plugin.go',
+    'internal/redisqueue/plugin_test.go',
+    'internal/requestmeta/requestid.go',
+    'internal/requestmeta/response.go',
 ], cwd=ROOT, check=True)
 subprocess.run(['go', 'mod', 'tidy'], cwd=ROOT, check=True)

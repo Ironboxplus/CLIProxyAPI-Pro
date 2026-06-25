@@ -1103,6 +1103,7 @@ func (s *accountInspectionScheduler) refreshTokenNow(ctx context.Context, item a
 			result.Error = result.TokenRefreshError
 			result.ErrorCode = "missing_auth_id"
 			result.ActionReason = "刷新令牌失败，保留账号"
+			s.syncInspectionAuthError(ctx, account, "token_refresh_error", result.TokenRefreshError, 0)
 			return result, errors.New(result.TokenRefreshError)
 		}
 		s.appendLog("info", fmt.Sprintf("主动刷新令牌 %s", account.identity()))
@@ -1119,6 +1120,7 @@ func (s *accountInspectionScheduler) refreshTokenNow(ctx context.Context, item a
 			result.Error = refreshErr.Error()
 			result.ErrorCode = "token_refresh_error"
 			result.ActionReason = "刷新令牌失败，保留账号"
+			s.syncInspectionAuthError(ctx, account, "token_refresh_error", refreshErr.Error(), 0)
 			s.appendLog("warning", fmt.Sprintf("%s 主动刷新令牌失败：%s", account.identity(), refreshErr.Error()))
 			return result, refreshErr
 		}
@@ -2625,10 +2627,10 @@ func (s *accountInspectionScheduler) clearInspectionAuthError(ctx context.Contex
 		return
 	}
 	auth := s.h.authByIndex(account.AuthIndex)
-	if auth == nil || auth.Status != coreauth.StatusError || auth.LastError == nil {
+	if auth == nil {
 		return
 	}
-	if auth.LastError.Code != "inspection_http_error" && auth.LastError.Code != "inspection_probe_error" && auth.LastError.Code != "antigravity_deep_probe_error" && auth.LastError.Code != "token_refresh_error" {
+	if !isInspectionAuthErrorCode(authInspectionLastErrorCode(auth)) {
 		return
 	}
 	err := s.updateInspectionAuth(ctx, account.AuthIndex, func(auth *coreauth.Auth) {
@@ -2644,6 +2646,29 @@ func (s *accountInspectionScheduler) clearInspectionAuthError(ctx context.Contex
 	})
 	if err != nil {
 		s.appendLog("warning", fmt.Sprintf("%s 认证状态清理失败：%s", account.identity(), err.Error()))
+	}
+}
+
+func authInspectionLastErrorCode(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	if auth.LastError != nil {
+		return strings.TrimSpace(auth.LastError.Code)
+	}
+	raw, ok := auth.Metadata["last_error"].(map[string]any)
+	if !ok {
+		return ""
+	}
+	return stringFromAny(raw["code"])
+}
+
+func isInspectionAuthErrorCode(code string) bool {
+	switch strings.TrimSpace(code) {
+	case "inspection_http_error", "inspection_probe_error", "antigravity_deep_probe_error", "token_refresh_error":
+		return true
+	default:
+		return false
 	}
 }
 

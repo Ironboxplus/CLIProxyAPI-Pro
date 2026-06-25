@@ -1,0 +1,30 @@
+FROM debian:bookworm
+
+ARG TARGETARCH
+
+RUN mkdir -p /CLIProxyAPI/usage
+
+COPY --from=ghcr.io/komari-monitor/komari-agent:latest /app/komari-agent /CLIProxyAPI/komari-agent
+
+RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates curl tzdata && rm -rf /var/lib/apt/lists/*
+
+WORKDIR /CLIProxyAPI
+
+COPY binaries/linux/${TARGETARCH}/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
+COPY config.example.yaml /CLIProxyAPI/config.example.yaml
+COPY entrypoint.sh /CLIProxyAPI/entrypoint.sh
+
+ENV TZ=Asia/Shanghai
+ENV USAGE_DATA_DIR=/CLIProxyAPI/usage
+ENV USAGE_DB_PATH=/CLIProxyAPI/usage/usage.sqlite
+ENV USAGE_BATCH_SIZE=100
+ENV USAGE_POLL_INTERVAL_MS=500
+ENV USAGE_QUERY_LIMIT=50000
+
+VOLUME ["/CLIProxyAPI/usage"]
+
+EXPOSE 8317
+
+RUN chmod -R 777 /CLIProxyAPI && chmod +x /CLIProxyAPI/entrypoint.sh
+
+CMD ["/CLIProxyAPI/entrypoint.sh"]

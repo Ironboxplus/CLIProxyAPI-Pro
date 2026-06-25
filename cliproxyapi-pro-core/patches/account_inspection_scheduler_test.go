@@ -279,6 +279,118 @@ func TestMergeTokenRefreshResultUpdatesErrorCodeAndHealthCounts(t *testing.T) {
 	}
 }
 
+func TestSyncAuthInspectionLastErrorClearsMetadata(t *testing.T) {
+	auth := &coreauth.Auth{
+		LastError: &coreauth.Error{Code: "token_refresh_error", Message: "old refresh failed"},
+		Metadata: map[string]any{
+			"last_error": map[string]any{"code": "token_refresh_error", "message": "old refresh failed"},
+			"email":      "user@example.com",
+		},
+	}
+
+	syncAuthInspectionLastError(auth, nil)
+
+	if auth.LastError != nil {
+		t.Fatalf("LastError = %#v, want nil", auth.LastError)
+	}
+	if _, ok := auth.Metadata["last_error"]; ok {
+		t.Fatalf("metadata last_error = %#v, want removed", auth.Metadata["last_error"])
+	}
+	if auth.Metadata["email"] != "user@example.com" {
+		t.Fatalf("metadata email = %#v, want preserved", auth.Metadata["email"])
+	}
+}
+
+func TestSyncInspectionAuthErrorPersistsLastErrorMetadata(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	registered, err := manager.Register(context.Background(), &coreauth.Auth{
+		Provider: "codex",
+		ID:       "codex-user",
+		FileName: "codex-user.json",
+		Metadata: map[string]any{"email": "user@example.com"},
+	})
+	if err != nil {
+		t.Fatalf("Register auth error = %v", err)
+	}
+
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	scheduler.syncInspectionAuthError(context.Background(), accountFromAuth(registered), "token_refresh_error", "refresh failed", 0)
+
+	var got *coreauth.Auth
+	for _, auth := range manager.List() {
+		if auth.ID == registered.ID {
+			got = auth
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("updated auth not found")
+	}
+	if got.Status != coreauth.StatusError || !got.Unavailable || got.StatusMessage != "refresh failed" {
+		t.Fatalf("updated status = status:%q unavailable:%v message:%q, want error/unavailable/refresh failed", got.Status, got.Unavailable, got.StatusMessage)
+	}
+	if got.LastError == nil || got.LastError.Code != "token_refresh_error" || got.LastError.Message != "refresh failed" {
+		t.Fatalf("LastError = %#v, want token_refresh_error/refresh failed", got.LastError)
+	}
+	lastError, ok := got.Metadata["last_error"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata last_error = %#v, want object", got.Metadata["last_error"])
+	}
+	if lastError["code"] != "token_refresh_error" || lastError["message"] != "refresh failed" {
+		t.Fatalf("metadata last_error = %#v, want token_refresh_error/refresh failed", lastError)
+	}
+}
+
+func TestClearInspectionAuthErrorClearsMetadataOnlyError(t *testing.T) {
+	manager := coreauth.NewManager(nil, nil, nil)
+	registered, err := manager.Register(context.Background(), &coreauth.Auth{
+		Provider:      "antigravity",
+		ID:            "antigravity-user",
+		FileName:      "antigravity-user.json",
+		Status:        coreauth.StatusActive,
+		StatusMessage: "",
+		Unavailable:   false,
+		Metadata: map[string]any{
+			"email": "user@example.com",
+			"last_error": map[string]any{
+				"code":        "inspection_probe_error",
+				"http_status": 0,
+				"message":     "antigravity quota unavailable",
+				"retryable":   false,
+			},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Register auth error = %v", err)
+	}
+
+	scheduler := &accountInspectionScheduler{h: &Handler{authManager: manager}}
+	scheduler.clearInspectionAuthError(context.Background(), accountFromAuth(registered))
+
+	var got *coreauth.Auth
+	for _, auth := range manager.List() {
+		if auth.ID == registered.ID {
+			got = auth
+			break
+		}
+	}
+	if got == nil {
+		t.Fatal("updated auth not found")
+	}
+	if got.LastError != nil {
+		t.Fatalf("LastError = %#v, want nil", got.LastError)
+	}
+	if _, ok := got.Metadata["last_error"]; ok {
+		t.Fatalf("metadata last_error = %#v, want removed", got.Metadata["last_error"])
+	}
+	if got.Status != coreauth.StatusActive || got.StatusMessage != "" || got.Unavailable {
+		t.Fatalf("status = %q message=%q unavailable=%v, want active/empty/false", got.Status, got.StatusMessage, got.Unavailable)
+	}
+	if got.Metadata["email"] != "user@example.com" {
+		t.Fatalf("metadata email = %#v, want preserved", got.Metadata["email"])
+	}
+}
+
 func TestAutoActionConfirmationDelaysExecution(t *testing.T) {
 	scheduler := &accountInspectionScheduler{}
 	result := testInspectionResult("quota", accountInspectionActionDisable, false, nil, true, "")

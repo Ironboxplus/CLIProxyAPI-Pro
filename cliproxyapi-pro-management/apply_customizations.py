@@ -120,6 +120,13 @@ GEMINI_CLI_LOCALE_KEYS = {
     },
 }
 
+AUTH_FILES_SEARCH_PLACEHOLDER_KEYS = {
+    'en.json': 'Filter by name, type, provider, note, or plan. Use * as a wildcard',
+    'ru.json': 'Фильтр по имени, типу, провайдеру, заметке или тарифу, поддерживается wildcard *',
+    'zh-CN.json': '输入名称、类型、提供方、备注或套餐关键字，支持 * 通配',
+    'zh-TW.json': '輸入名稱、類型、供應方、備註或套餐關鍵字，支援 * 萬用字元',
+}
+
 
 _writes = {}
 
@@ -538,6 +545,234 @@ def patch_quota_styles(target: Path) -> None:
     )
 
 
+def patch_auth_files_page_search(target: Path) -> None:
+    path = target / 'src/pages/AuthFilesPage.tsx'
+    replace_once(
+        path,
+        "import { useAuthStore, useNotificationStore, useThemeStore } from '@/stores';\n",
+        "import { useAuthStore, useNotificationStore, useThemeStore, useQuotaStore } from '@/stores';\n",
+    )
+    insert_once(
+        path,
+        "const buildWildcardSearch = (value: string): RegExp | null => {\n"
+        "  if (!value.includes('*')) return null;\n"
+        "  const pattern = value.split('*').map(escapeWildcardSearchSegment).join('.*');\n"
+        "  return new RegExp(pattern, 'i');\n"
+        "};\n",
+        "const buildWildcardSearch = (value: string): RegExp | null => {\n"
+        "  if (!value.includes('*')) return null;\n"
+        "  const pattern = value.split('*').map(escapeWildcardSearchSegment).join('.*');\n"
+        "  return new RegExp(pattern, 'i');\n"
+        "};\n"
+        "\n"
+        "const AUTH_FILE_SEARCH_FIELD_KEYS = [\n"
+        "  'name',\n"
+        "  'type',\n"
+        "  'provider',\n"
+        "  'note',\n"
+        "  'remark',\n"
+        "  'remarks',\n"
+        "  'description',\n"
+        "  'plan',\n"
+        "  'plan_type',\n"
+        "  'planType',\n"
+        "  'package',\n"
+        "  'package_name',\n"
+        "  'packageName',\n"
+        "  'subscription',\n"
+        "  'subscription_plan',\n"
+        "  'subscriptionPlan',\n"
+        "  'tier',\n"
+        "  'tier_id',\n"
+        "  'tierId',\n"
+        "  'tier_label',\n"
+        "  'tierLabel',\n"
+        "  'product',\n"
+        "  'product_name',\n"
+        "  'productName',\n"
+        "  'quota_plan',\n"
+        "  'quotaPlan',\n"
+        "] as const;\n"
+        "\n"
+        "const PREMIUM_CODEX_SEARCH_PLAN_TYPES = new Set(['pro', 'prolite', 'pro-lite', 'pro_lite']);\n"
+        "const XAI_SUPERGROK_LIMIT_CENTS = 15_000;\n"
+        "const XAI_SUPERGROK_HEAVY_LIMIT_CENTS = 150_000;\n"
+        "\n"
+        "type AuthFileSearchTranslate = (key: string) => string;\n"
+        "type AuthFileSearchQuotaStore = Pick<\n"
+        "  ReturnType<typeof useQuotaStore.getState>,\n"
+        "  'antigravityQuota' | 'claudeQuota' | 'codexQuota' | 'geminiCliQuota' | 'xaiQuota'\n"
+        ">;\n"
+        "\n"
+        "const AUTH_FILE_NESTED_SEARCH_KEY_PATTERN =\n"
+        "  /(note|remark|description|desc|plan|package|subscription|tier|product|quota)/i;\n"
+        "\n"
+        "const addAuthFileSearchValue = (values: string[], value: unknown) => {\n"
+        "  if (value == null) return;\n"
+        "  if (typeof value === 'string') {\n"
+        "    const trimmed = value.trim();\n"
+        "    if (trimmed) values.push(trimmed);\n"
+        "    return;\n"
+        "  }\n"
+        "  if (typeof value === 'number' || typeof value === 'boolean') {\n"
+        "    values.push(String(value));\n"
+        "  }\n"
+        "};\n"
+        "\n"
+        "const toAuthFileSearchRecord = (value: unknown): Record<string, unknown> | null =>\n"
+        "  value && typeof value === 'object' && !Array.isArray(value)\n"
+        "    ? (value as Record<string, unknown>)\n"
+        "    : null;\n"
+        "\n"
+        "const normalizeAuthFileSearchPlan = (value: unknown): string =>\n"
+        "  typeof value === 'string' ? value.trim().toLowerCase().replace(/_/g, '-') : '';\n"
+        "\n"
+        "const addCodexPlanSearchValues = (\n"
+        "  values: string[],\n"
+        "  planType: unknown,\n"
+        "  t: AuthFileSearchTranslate\n"
+        ") => {\n"
+        "  const normalized = normalizeAuthFileSearchPlan(planType);\n"
+        "  if (!normalized) return;\n"
+        "  values.push(normalized, normalized.replace(/-/g, ' '));\n"
+        "  if (normalized === 'pro') values.push(t('codex_quota.plan_pro'));\n"
+        "  else if (PREMIUM_CODEX_SEARCH_PLAN_TYPES.has(normalized)) values.push(t('codex_quota.plan_prolite'));\n"
+        "  else if (normalized === 'plus') values.push(t('codex_quota.plan_plus'));\n"
+        "  else if (normalized === 'team') values.push(t('codex_quota.plan_team'));\n"
+        "  else if (normalized === 'free') values.push(t('codex_quota.plan_free'));\n"
+        "};\n"
+        "\n"
+        "const addClaudePlanSearchValues = (\n"
+        "  values: string[],\n"
+        "  planType: unknown,\n"
+        "  t: AuthFileSearchTranslate\n"
+        ") => {\n"
+        "  const raw = typeof planType === 'string' ? planType.trim() : '';\n"
+        "  if (!raw) return;\n"
+        "  values.push(raw, raw.replace(/^plan[_-]/i, '').replace(/[_-]/g, ' '));\n"
+        "  values.push(t(`claude_quota.${raw}`));\n"
+        "};\n"
+        "\n"
+        "const addAntigravityPlanSearchValues = (\n"
+        "  values: string[],\n"
+        "  subscription: unknown,\n"
+        "  t: AuthFileSearchTranslate\n"
+        ") => {\n"
+        "  const record = toAuthFileSearchRecord(subscription);\n"
+        "  if (!record) return;\n"
+        "  const plan = normalizeAuthFileSearchPlan(record.plan);\n"
+        "  addAuthFileSearchValue(values, record.plan);\n"
+        "  addAuthFileSearchValue(values, record.tierName);\n"
+        "  addAuthFileSearchValue(values, record.tierId);\n"
+        "  if (plan === 'free') values.push(t('antigravity_subscription.plan_free'));\n"
+        "  else if (plan === 'pro') values.push(t('antigravity_subscription.plan_pro'));\n"
+        "  else if (plan === 'ultra') values.push(t('antigravity_subscription.plan_ultra'));\n"
+        "  else if (plan === 'ultra-lite') values.push(t('antigravity_subscription.plan_ultra_lite'));\n"
+        "};\n"
+        "\n"
+        "const normalizeAuthFileSearchCents = (value: unknown): number | null => {\n"
+        "  const source = toAuthFileSearchRecord(value)?.val ?? value;\n"
+        "  if (typeof source === 'number' && Number.isFinite(source)) return source;\n"
+        "  if (typeof source !== 'string') return null;\n"
+        "  const parsed = Number(source.trim());\n"
+        "  return Number.isFinite(parsed) ? parsed : null;\n"
+        "};\n"
+        "\n"
+        "const addXaiPlanSearchValues = (\n"
+        "  values: string[],\n"
+        "  billing: unknown,\n"
+        "  t: AuthFileSearchTranslate\n"
+        ") => {\n"
+        "  const record = toAuthFileSearchRecord(billing);\n"
+        "  if (!record) return;\n"
+        "  const monthlyLimitCents = normalizeAuthFileSearchCents(record.monthlyLimitCents);\n"
+        "  if (monthlyLimitCents === XAI_SUPERGROK_LIMIT_CENTS) values.push(t('xai_quota.plan_supergrok'), 'supergrok');\n"
+        "  if (monthlyLimitCents === XAI_SUPERGROK_HEAVY_LIMIT_CENTS) values.push(t('xai_quota.plan_supergrok_heavy'), 'supergrok heavy');\n"
+        "};\n"
+        "\n"
+        "const buildAuthFileQuotaSearchValues = (\n"
+        "  item: Record<string, unknown>,\n"
+        "  quotaStore: AuthFileSearchQuotaStore,\n"
+        "  t: AuthFileSearchTranslate\n"
+        "): string[] => {\n"
+        "  const name = typeof item.name === 'string' ? item.name : '';\n"
+        "  if (!name) return [];\n"
+        "  const values: string[] = [];\n"
+        "  addAntigravityPlanSearchValues(values, quotaStore.antigravityQuota[name]?.subscription, t);\n"
+        "  addClaudePlanSearchValues(values, quotaStore.claudeQuota[name]?.planType, t);\n"
+        "  addCodexPlanSearchValues(values, quotaStore.codexQuota[name]?.planType, t);\n"
+        "  addAuthFileSearchValue(values, quotaStore.geminiCliQuota[name]?.tierLabel);\n"
+        "  addAuthFileSearchValue(values, quotaStore.geminiCliQuota[name]?.tierId);\n"
+        "  addAuthFileSearchValue(values, quotaStore.geminiCliQuota[name]?.creditBalance);\n"
+        "  addXaiPlanSearchValues(values, quotaStore.xaiQuota[name]?.billing, t);\n"
+        "  return values;\n"
+        "};\n"
+        "\n"
+        "const collectAuthFileSearchValues = (value: unknown, depth = 0): string[] => {\n"
+        "  if (value == null) return [];\n"
+        "  if (typeof value === 'string') return value.trim() ? [value] : [];\n"
+        "  if (typeof value === 'number' || typeof value === 'boolean') return [String(value)];\n"
+        "  if (depth >= 2) return [];\n"
+        "  if (Array.isArray(value)) {\n"
+        "    return value.flatMap((item) => collectAuthFileSearchValues(item, depth + 1));\n"
+        "  }\n"
+        "  if (typeof value !== 'object') return [];\n"
+        "\n"
+        "  return Object.entries(value as Record<string, unknown>).flatMap(([key, nestedValue]) =>\n"
+        "    AUTH_FILE_NESTED_SEARCH_KEY_PATTERN.test(key)\n"
+        "      ? collectAuthFileSearchValues(nestedValue, depth + 1)\n"
+        "      : []\n"
+        "  );\n"
+        "};\n"
+        "\n"
+        "const buildAuthFileSearchValues = (\n"
+        "  item: Record<string, unknown>,\n"
+        "  quotaStore: AuthFileSearchQuotaStore,\n"
+        "  t: AuthFileSearchTranslate\n"
+        "): string[] => [\n"
+        "  ...AUTH_FILE_SEARCH_FIELD_KEYS.flatMap((key) => collectAuthFileSearchValues(item[key])),\n"
+        "  ...buildAuthFileQuotaSearchValues(item, quotaStore, t),\n"
+        "];\n",
+        "AUTH_FILE_SEARCH_FIELD_KEYS",
+    )
+    insert_once(
+        path,
+        "  const statusBarCache = useAuthFilesStatusBarCache(files);\n",
+        "  const statusBarCache = useAuthFilesStatusBarCache(files);\n"
+        "\n"
+        "  const antigravityQuota = useQuotaStore((state) => state.antigravityQuota);\n"
+        "  const claudeQuota = useQuotaStore((state) => state.claudeQuota);\n"
+        "  const codexQuota = useQuotaStore((state) => state.codexQuota);\n"
+        "  const geminiCliQuota = useQuotaStore((state) => state.geminiCliQuota);\n"
+        "  const xaiQuota = useQuotaStore((state) => state.xaiQuota);\n"
+        "  const quotaSearchStore = useMemo(\n"
+        "    () => ({ antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, xaiQuota }),\n"
+        "    [antigravityQuota, claudeQuota, codexQuota, geminiCliQuota, xaiQuota]\n"
+        "  );\n",
+        "quotaSearchStore",
+    )
+    replace_once(
+        path,
+        "        [item.name, item.type, item.provider].some((value) => {\n"
+        "          const content = (value || '').toString();\n"
+        "          return wildcardSearch\n"
+        "            ? wildcardSearch.test(content)\n"
+        "            : content.toLowerCase().includes(normalizedTerm);\n"
+        "        });\n",
+        "        buildAuthFileSearchValues(item, quotaSearchStore, t).some((value) => {\n"
+        "          const content = value.toString();\n"
+        "          return wildcardSearch\n"
+        "            ? wildcardSearch.test(content)\n"
+        "            : content.toLowerCase().includes(normalizedTerm);\n"
+        "        });\n",
+    )
+    replace_once(
+        path,
+        "  }, [filesMatchingStatusFilters, normalizedFilter, normalizedSearch, wildcardSearch]);\n",
+        "  }, [filesMatchingStatusFilters, normalizedFilter, normalizedSearch, quotaSearchStore, t, wildcardSearch]);\n",
+    )
+
+
 def patch_supporting_api_and_types(target: Path) -> None:
     config_path = target / 'src/types/config.ts'
     replace_once(
@@ -695,6 +930,10 @@ def patch_locales(target: Path) -> None:
         data.setdefault('quota_management', {}).update(QUOTA_LOCALE_KEYS.get(locale_path.name, {}))
         gemini_cli_locale = GEMINI_CLI_LOCALE_KEYS.get(locale_path.name, GEMINI_CLI_LOCALE_KEYS['en.json'])
         data.setdefault('auth_files', {})['filter_gemini-cli'] = gemini_cli_locale['auth_filter']
+        data.setdefault('auth_files', {})['search_placeholder'] = AUTH_FILES_SEARCH_PLACEHOLDER_KEYS.get(
+            locale_path.name,
+            AUTH_FILES_SEARCH_PLACEHOLDER_KEYS['en.json'],
+        )
         data.setdefault('gemini_cli_quota', {}).update(gemini_cli_locale['quota'])
         locale_path.write_text(json.dumps(data, ensure_ascii=False, indent=2) + '\n')
 
@@ -720,6 +959,7 @@ def main() -> None:
     patch_quota_page(target)
     patch_quota_card(target)
     patch_quota_styles(target)
+    patch_auth_files_page_search(target)
     patch_supporting_api_and_types(target)
     patch_locales(target)
     flush_writes()

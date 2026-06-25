@@ -7,7 +7,7 @@ import (
 	"strings"
 	"time"
 
-	internallogging "github.com/router-for-me/CLIProxyAPI/v6/internal/logging"
+	"github.com/router-for-me/CLIProxyAPI/v6/internal/requestmeta"
 	coreusage "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/usage"
 )
 
@@ -51,7 +51,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		authType = "unknown"
 	}
 	apiKey := strings.TrimSpace(record.APIKey)
-	requestID := strings.TrimSpace(internallogging.GetRequestID(ctx))
+	requestID := strings.TrimSpace(requestmeta.GetRequestID(ctx))
 	reasoningEffort := strings.TrimSpace(record.ReasoningEffort)
 	if reasoningEffort == "" {
 		reasoningEffort = coreusage.ReasoningEffortFromContext(ctx)
@@ -164,7 +164,7 @@ func resolveFail(ctx context.Context, record coreusage.Record, failed bool) fail
 		return failDetail{StatusCode: 200}
 	}
 	if fail.StatusCode <= 0 {
-		fail.StatusCode = internallogging.GetResponseStatus(ctx)
+		fail.StatusCode = requestmeta.GetResponseStatus(ctx)
 	}
 	if fail.StatusCode <= 0 {
 		fail.StatusCode = 500
@@ -173,7 +173,7 @@ func resolveFail(ctx context.Context, record coreusage.Record, failed bool) fail
 }
 
 func resolveSuccess(ctx context.Context) bool {
-	status := internallogging.GetResponseStatus(ctx)
+	status := requestmeta.GetResponseStatus(ctx)
 	if status == 0 {
 		return true
 	}
@@ -181,7 +181,7 @@ func resolveSuccess(ctx context.Context) bool {
 }
 
 func resolveEndpoint(ctx context.Context) string {
-	return strings.TrimSpace(internallogging.GetEndpoint(ctx))
+	return strings.TrimSpace(requestmeta.GetEndpoint(ctx))
 }
 
 const httpStatusBadRequest = 400

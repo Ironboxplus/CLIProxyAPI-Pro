@@ -101,7 +101,9 @@ jobs:
           echo "should_release=${should_release}" >> "${GITHUB_OUTPUT}"
 
   build-docker-image:
-    needs: check-version
+    needs:
+      - check-version
+      - build-core-binaries
     if: needs.check-version.outputs.should_release == 'true'
     runs-on: ubuntu-latest
 
@@ -116,6 +118,39 @@ jobs:
           path: customizations-repo
           fetch-depth: 1
 
+      - name: Download Linux amd64 core asset
+        uses: actions/download-artifact@v4
+        with:
+          name: core-release-assets-linux-amd64
+          path: docker-assets/linux-amd64
+
+      - name: Prepare Docker runtime context
+        env:
+          RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
+        run: |
+          set -euo pipefail
+
+          context_dir="docker-runtime-context"
+          rm -rf "${context_dir}"
+          mkdir -p "${context_dir}/binaries/linux/amd64"
+
+          amd64_archive="docker-assets/linux-amd64/CLIProxyAPI_${RELEASE_TAG#v}_linux_amd64.tar.gz"
+          test -f "${amd64_archive}"
+
+          tmp_dir="$(mktemp -d)"
+          trap 'rm -rf "${tmp_dir}"' EXIT
+
+          mkdir -p "${tmp_dir}/amd64"
+          tar -xzf "${amd64_archive}" -C "${tmp_dir}/amd64"
+
+          cp "${tmp_dir}/amd64/cli-proxy-api" "${context_dir}/binaries/linux/amd64/CLIProxyAPI"
+          cp "${tmp_dir}/amd64/config.example.yaml" "${context_dir}/config.example.yaml"
+          cp customizations-repo/cliproxyapi-pro-core/entrypoint.sh "${context_dir}/entrypoint.sh"
+          cp customizations-repo/cliproxyapi-pro-core/Dockerfile.runtime "${context_dir}/Dockerfile.runtime"
+
+          chmod +x "${context_dir}/binaries/linux/amd64/CLIProxyAPI"
+          ls -lh "${context_dir}/binaries/linux/amd64/CLIProxyAPI"
+
       - name: Set up Docker Buildx
         uses: docker/setup-buildx-action@v3
 
@@ -129,11 +164,9 @@ jobs:
       - name: Build and push Docker image
         uses: docker/build-push-action@v6
         with:
-          context: ./customizations-repo/cliproxyapi-pro-core
+          context: ./docker-runtime-context
+          file: ./docker-runtime-context/Dockerfile.runtime
           platforms: linux/amd64
-          build-args: |
-            CLIPROXY_VERSION=${{ needs.check-version.outputs.core_tag }}
-            CLIPROXY_BUILD_VERSION=${{ needs.check-version.outputs.release_tag }}
           push: true
           tags: |
             ghcr.io/ironboxplus/cliproxyapi-pro:latest
