@@ -372,8 +372,8 @@ def patch_quota_configs(target: Path) -> None:
         ),
         (
             'setCodexQuota',
-            "    windows: data.windows,\n    planType: data.planType,\n    subscriptionActiveUntil: data.subscriptionActiveUntil,\n    rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,\n  }),",
-            "    windows: data.windows,\n    planType: data.planType,\n    subscriptionActiveUntil: data.subscriptionActiveUntil,\n    rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,\n    cachedAt: Date.now(),\n  }),",
+            "    windows: data.windows,\n    planType: data.planType,\n    subscriptionActiveUntil: data.subscriptionActiveUntil,\n    rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,\n    rateLimitResetCredits: data.rateLimitResetCredits,\n    rateLimitResetCreditsError: data.rateLimitResetCreditsError,\n  }),",
+            "    windows: data.windows,\n    planType: data.planType,\n    subscriptionActiveUntil: data.subscriptionActiveUntil,\n    rateLimitResetCreditsAvailableCount: data.rateLimitResetCreditsAvailableCount,\n    rateLimitResetCredits: data.rateLimitResetCredits,\n    rateLimitResetCreditsError: data.rateLimitResetCreditsError,\n    cachedAt: Date.now(),\n  }),",
         ),
         (
             'setKimiQuota',
