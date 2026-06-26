@@ -886,11 +886,23 @@ def patch_supporting_api_and_types(target: Path) -> None:
             "  placeholder,\n  className,\n  triggerClassName,\n  dropdownClassName,\n  disabled = false,\n",
         )
     if 'dropdownClassName].filter(Boolean).join' not in read(select_path):
-        replace_once(
-            select_path,
-            "            className={styles.dropdown}\n",
-            "            className={[styles.dropdown, dropdownClassName].filter(Boolean).join(' ')}\n",
-        )
+        text = read(select_path)
+        dropdown_class_replacements = [
+            (
+                "            className={styles.dropdown}\n",
+                "            className={[styles.dropdown, dropdownClassName].filter(Boolean).join(' ')}\n",
+            ),
+            (
+                "        className={styles.dropdown}\n",
+                "        className={[styles.dropdown, dropdownClassName].filter(Boolean).join(' ')}\n",
+            ),
+        ]
+        for old, new in dropdown_class_replacements:
+            if old in text:
+                write(select_path, text.replace(old, new, 1))
+                break
+        else:
+            raise RuntimeError(f'Pattern not found in {select_path}: Select dropdown className')
     if 'triggerClassName].filter(Boolean).join' not in read(select_path):
         text = read(select_path)
         old_simple = "          className={styles.trigger}\n"
