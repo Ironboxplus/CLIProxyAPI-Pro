@@ -34,13 +34,14 @@ import { apiClient } from '@/services/api/client';
 import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } from '@/stores';
 import type { AuthFileItem } from '@/types';
 import { maskSensitiveText } from '@/utils/format';
-import { getStatusFromError, isAntigravityFile, isClaudeFile, isCodexFile, isKimiFile } from '@/utils/quota';
+import { getStatusFromError, isAntigravityFile, isClaudeFile, isCodexFile, isKimiFile, isXaiFile } from '@/utils/quota';
 import { formatCompactNumber, formatDurationMs, formatUsd, normalizeAuthIndex, type ModelPrice } from '@/utils/usage';
 import {
   ANTIGRAVITY_CONFIG,
   CLAUDE_CONFIG,
   CODEX_CONFIG,
   KIMI_CONFIG,
+  XAI_CONFIG,
   type QuotaConfig,
   type QuotaStore,
 } from '@/components/quota/quotaConfigs';
@@ -288,6 +289,13 @@ const estimateRealtimeLogColumnWidth = (
   const characterWidth = key === 'recent' ? 6 : key === 'usage' ? 8 : 7;
   const padding = key === 'status' ? 36 : key === 'usage' ? 34 : 28;
   return clampRealtimeLogColumnWidth(key, maxTextLength * characterWidth + padding);
+};
+
+const estimateRealtimeLogHeaderWidth = (key: RealtimeLogColumnKey, label: string) => {
+  const textWidth = Array.from(label).reduce((total, char) => (
+    total + (char.charCodeAt(0) > 255 ? 13 : 7)
+  ), 0);
+  return clampRealtimeLogColumnWidth(key, textWidth + 42);
 };
 
 const formatStatusWindowLabel = (startTime: number, endTime: number, locale: string) => {
@@ -1170,7 +1178,6 @@ const formatPriceUnit = (value: number) => `$${value.toFixed(4)}/1M`;
 
 const buildRealtimeMetaText = (row: MonitoringEventRow) => {
   const parts = [`${row.endpointMethod} ${row.endpointPath}`.trim()];
-  if (row.executorType) parts.push(row.executorType);
   const text = parts.filter(Boolean).join(' · ');
   return maskSensitiveText(text || '-');
 };
@@ -1181,7 +1188,6 @@ const buildRealtimeDiagnosticText = (row: MonitoringEventRow) => {
     parts.push(`HTTP ${row.statusCode}`);
   }
   if (row.errorCode) parts.push(row.errorCode);
-  if (row.upstreamRequestId) parts.push(`RID ${row.upstreamRequestId}`);
   if (row.retryAfter) parts.push(`Retry ${row.retryAfter}`);
   return maskSensitiveText(parts.join(' · '));
 };
@@ -1203,6 +1209,7 @@ const getAccountQuotaConfig = (file: AuthFileItem): AnyQuotaConfig | undefined =
   if (isClaudeFile(file)) return CLAUDE_CONFIG;
   if (isCodexFile(file)) return CODEX_CONFIG;
   if (isKimiFile(file)) return KIMI_CONFIG;
+  if (isXaiFile(file)) return XAI_CONFIG;
   return undefined;
 };
 
@@ -3446,14 +3453,18 @@ export function MonitoringCenterPage() {
   const visibleRealtimeLogColumns = useMemo(
     () => realtimeLogColumns
       .filter((column) => column.visible)
-      .map((column) => ({
-        ...realtimeLogColumnDefinitions[column.key],
-        width: column.width ?? estimateRealtimeLogColumnWidth(
+      .map((column) => {
+        const definition = realtimeLogColumnDefinitions[column.key];
+        const contentWidth = column.width ?? estimateRealtimeLogColumnWidth(
           column.key,
-          realtimeLogColumnDefinitions[column.key].label,
+          definition.label,
           realtimeLogPageRows
-        ),
-      }))
+        );
+        return {
+          ...definition,
+          width: Math.max(contentWidth, estimateRealtimeLogHeaderWidth(column.key, definition.label)),
+        };
+      })
       .filter(Boolean),
     [realtimeLogColumnDefinitions, realtimeLogColumns, realtimeLogPageRows]
   );

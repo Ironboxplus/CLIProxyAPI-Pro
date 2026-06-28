@@ -2980,6 +2980,10 @@
 
 .realtimeTableWrapper {
   max-height: min(620px, 68vh);
+  overflow-x: auto;
+  overflow-y: auto;
+  touch-action: pan-x pan-y;
+  -webkit-overflow-scrolling: touch;
 }
 
 .tableScrollWrapper::-webkit-scrollbar {
@@ -3260,6 +3264,7 @@
 
 .realtimeDraggableHeader {
   position: relative;
+  white-space: nowrap;
   cursor: grab;
 }
 
@@ -3275,8 +3280,8 @@
 .realtimeHeaderContent {
   display: inline-block;
   max-width: calc(100% - 12px);
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow: visible;
+  white-space: nowrap;
   vertical-align: middle;
 }
 
@@ -3889,23 +3894,19 @@
   }
 
   .accountOverviewTable th:first-child,
-  .accountOverviewTable td:first-child,
-  .realtimeTable th:first-child,
-  .realtimeTable td:first-child {
+  .accountOverviewTable td:first-child {
     position: sticky;
     left: 0;
     z-index: 2;
     box-shadow: 8px 0 14px color-mix(in srgb, var(--monitor-bg) 56%, transparent);
   }
 
-  .accountOverviewTable th:first-child,
-  .realtimeTable th:first-child {
+  .accountOverviewTable th:first-child {
     z-index: 4;
     background: var(--monitor-surface);
   }
 
-  .accountOverviewTable td:first-child,
-  .realtimeTable td:first-child {
+  .accountOverviewTable td:first-child {
     background: var(--monitor-surface-elevated);
   }
 
