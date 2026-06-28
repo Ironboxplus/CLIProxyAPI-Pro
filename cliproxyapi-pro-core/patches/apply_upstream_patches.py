@@ -180,6 +180,12 @@ insert_before(
     '// SaveConfigPreserveCommentsUpdateNestedBoolScalar updates a nested bool scalar while preserving comments and positions.\nfunc SaveConfigPreserveCommentsUpdateNestedBoolScalar(configFile string, path []string, value bool) error {\n\tdata, err := os.ReadFile(configFile)\n\tif err != nil {\n\t\treturn err\n\t}\n\tvar root yaml.Node\n\tif err = yaml.Unmarshal(data, &root); err != nil {\n\t\treturn err\n\t}\n\tif root.Kind != yaml.DocumentNode || len(root.Content) == 0 {\n\t\treturn fmt.Errorf("invalid yaml document structure")\n\t}\n\tnode := root.Content[0]\n\tfor i, key := range path {\n\t\tif i == len(path)-1 {\n\t\t\tv := getOrCreateMapValue(node, key)\n\t\t\tv.Kind = yaml.ScalarNode\n\t\t\tv.Tag = "!!bool"\n\t\t\tif value {\n\t\t\t\tv.Value = "true"\n\t\t\t} else {\n\t\t\t\tv.Value = "false"\n\t\t\t}\n\t\t} else {\n\t\t\tnext := getOrCreateMapValue(node, key)\n\t\t\tif next.Kind != yaml.MappingNode {\n\t\t\t\tnext.Kind = yaml.MappingNode\n\t\t\t\tnext.Tag = "!!map"\n\t\t\t}\n\t\t\tnode = next\n\t\t}\n\t}\n\tf, err := os.Create(configFile)\n\tif err != nil {\n\t\treturn err\n\t}\n\tdefer func() { _ = f.Close() }()\n\tvar buf bytes.Buffer\n\tenc := yaml.NewEncoder(&buf)\n\tenc.SetIndent(2)\n\tif err = enc.Encode(&root); err != nil {\n\t\t_ = enc.Close()\n\t\treturn err\n\t}\n\tif err = enc.Close(); err != nil {\n\t\treturn err\n\t}\n\tdata = NormalizeCommentIndentation(buf.Bytes())\n\t_, err = f.Write(data)\n\treturn err\n}\n\n',
     'func SaveConfigPreserveCommentsUpdateNestedBoolScalar',
 )
+insert_before(
+    config_go,
+    '// NormalizeCommentIndentation removes indentation from standalone YAML comment lines to keep them left aligned.\n',
+    '// PluginAutoInstallProxyURL returns the proxy URL used by plugin store auto-install requests.\nfunc (cfg *Config) PluginAutoInstallProxyURL() string {\n\tif cfg == nil {\n\t\treturn ""\n\t}\n\treturn cfg.ProxyURL\n}\n\n// PluginAutoInstallEnabled reports whether dynamic plugins are enabled.\nfunc (cfg *Config) PluginAutoInstallEnabled() bool {\n\treturn cfg != nil && cfg.Plugins.Enabled\n}\n\n// PluginAutoInstallDir returns the normalized plugin discovery directory.\nfunc (cfg *Config) PluginAutoInstallDir() string {\n\tif cfg == nil {\n\t\treturn ""\n\t}\n\treturn cfg.Plugins.Dir\n}\n\n// PluginAutoInstallStoreSources returns configured third-party plugin registry URLs.\nfunc (cfg *Config) PluginAutoInstallStoreSources() []string {\n\tif cfg == nil || len(cfg.Plugins.StoreSources) == 0 {\n\t\treturn nil\n\t}\n\treturn append([]string(nil), cfg.Plugins.StoreSources...)\n}\n\n// PluginAutoInstallEnabledIDs returns configured plugin IDs that should be present at startup.\nfunc (cfg *Config) PluginAutoInstallEnabledIDs() []string {\n\tif cfg == nil || len(cfg.Plugins.Configs) == 0 {\n\t\treturn nil\n\t}\n\tids := make([]string, 0, len(cfg.Plugins.Configs))\n\tfor id, item := range cfg.Plugins.Configs {\n\t\tif item.Enabled == nil || !*item.Enabled {\n\t\t\tcontinue\n\t\t}\n\t\tids = append(ids, id)\n\t}\n\treturn ids\n}\n\n',
+    'func (cfg *Config) PluginAutoInstallProxyURL',
+)
 
 updater = ROOT / 'internal/managementasset/updater.go'
 replace_once(
@@ -230,7 +236,6 @@ import (
 \t"sort"
 \t"strings"
 
-\t"{import_path('internal/config')}"
 \t"{import_path('sdk/proxyutil')}"
 \tlog "github.com/sirupsen/logrus"
 \t"golang.org/x/sys/cpu"
@@ -252,6 +257,16 @@ type AutoInstallReport struct {{
 \tWarnings []AutoInstallWarning
 }}
 
+// AutoInstallConfig is the small read-only config surface needed by plugin auto-install.
+type AutoInstallConfig interface {{
+\tNormalizePluginsConfig()
+\tPluginAutoInstallProxyURL() string
+\tPluginAutoInstallEnabled() bool
+\tPluginAutoInstallDir() string
+\tPluginAutoInstallStoreSources() []string
+\tPluginAutoInstallEnabledIDs() []string
+}}
+
 type autoInstallOptions struct {{
 \tHTTPClient HTTPDoer
 \tGOOS string
@@ -265,7 +280,7 @@ type autoInstallSourcePlugin struct {{
 }}
 
 // EnsureConfiguredPluginsInstalled downloads missing enabled plugins before the plugin host scans local binaries.
-func EnsureConfiguredPluginsInstalled(ctx context.Context, cfg *config.Config) AutoInstallReport {{
+func EnsureConfiguredPluginsInstalled(ctx context.Context, cfg AutoInstallConfig) AutoInstallReport {{
 \treport := ensureConfiguredPluginsInstalled(ctx, cfg, autoInstallOptions{{}})
 \tfor _, warning := range report.Warnings {{
 \t\tfields := log.Fields{{}}
@@ -290,7 +305,7 @@ func EnsureConfiguredPluginsInstalled(ctx context.Context, cfg *config.Config) A
 \treturn report
 }}
 
-func ensureConfiguredPluginsInstalled(ctx context.Context, cfg *config.Config, options autoInstallOptions) AutoInstallReport {{
+func ensureConfiguredPluginsInstalled(ctx context.Context, cfg AutoInstallConfig, options autoInstallOptions) AutoInstallReport {{
 \tvar report AutoInstallReport
 \tif ctx == nil {{
 \t\tctx = context.Background()
@@ -299,7 +314,7 @@ func ensureConfiguredPluginsInstalled(ctx context.Context, cfg *config.Config, o
 \t\treturn report
 \t}}
 \tcfg.NormalizePluginsConfig()
-\tif !cfg.Plugins.Enabled {{
+\tif !cfg.PluginAutoInstallEnabled() {{
 \t\treturn report
 \t}}
 
@@ -308,7 +323,7 @@ func ensureConfiguredPluginsInstalled(ctx context.Context, cfg *config.Config, o
 \t\treturn report
 \t}}
 
-\tinstalledIDs, errDiscover := installedPluginIDs(cfg.Plugins.Dir)
+\tinstalledIDs, errDiscover := installedPluginIDs(cfg.PluginAutoInstallDir())
 \tif errDiscover != nil {{
 \t\treport.Warnings = append(report.Warnings, AutoInstallWarning{{Message: "discover installed plugins: " + errDiscover.Error()}})
 \t\treturn report
@@ -329,7 +344,7 @@ func ensureConfiguredPluginsInstalled(ctx context.Context, cfg *config.Config, o
 \t\twanted[id] = struct{{}}{{}}
 \t}}
 
-\tsources, errSources := NormalizeSources(cfg.Plugins.StoreSources)
+\tsources, errSources := NormalizeSources(cfg.PluginAutoInstallStoreSources())
 \tif errSources != nil {{
 \t\treport.Warnings = append(report.Warnings, AutoInstallWarning{{Message: "normalize plugin store sources: " + errSources.Error()}})
 \t\treturn report
@@ -337,7 +352,7 @@ func ensureConfiguredPluginsInstalled(ctx context.Context, cfg *config.Config, o
 
 \thttpClient := options.HTTPClient
 \tif httpClient == nil {{
-\t\thttpClient = autoInstallHTTPClient(cfg.ProxyURL)
+\t\thttpClient = autoInstallHTTPClient(cfg.PluginAutoInstallProxyURL())
 \t}}
 
 \tmatches := make(map[string][]autoInstallSourcePlugin, len(missingIDs))
@@ -384,7 +399,7 @@ func ensureConfiguredPluginsInstalled(ctx context.Context, cfg *config.Config, o
 \t\tcase 1:
 \t\t\tcandidate := candidates[0]
 \t\t\tresult, errInstall := installer(ctx, Client{{HTTPClient: httpClient, RegistryURL: candidate.source.URL}}, candidate.plugin, InstallOptions{{
-\t\t\t\tPluginsDir: cfg.Plugins.Dir,
+\t\t\t\tPluginsDir: cfg.PluginAutoInstallDir(),
 \t\t\t\tGOOS: goos,
 \t\t\t\tGOARCH: goarch,
 \t\t\t}})
@@ -406,11 +421,12 @@ func ensureConfiguredPluginsInstalled(ctx context.Context, cfg *config.Config, o
 \treturn report
 }}
 
-func enabledConfiguredPluginIDs(cfg *config.Config) []string {{
-\tids := make([]string, 0, len(cfg.Plugins.Configs))
-\tfor id, item := range cfg.Plugins.Configs {{
+func enabledConfiguredPluginIDs(cfg AutoInstallConfig) []string {{
+\tconfiguredIDs := cfg.PluginAutoInstallEnabledIDs()
+\tids := make([]string, 0, len(configuredIDs))
+\tfor _, id := range configuredIDs {{
 \t\tid = strings.TrimSpace(id)
-\t\tif id == "" || item.Enabled == nil || !*item.Enabled {{
+\t\tif id == "" {{
 \t\t\tcontinue
 \t\t}}
 \t\tif !autoInstallValidatePluginID(id) {{
@@ -561,10 +577,9 @@ import (
 \t"os"
 \t"path/filepath"
 \t"runtime"
+\t"sort"
 \t"strings"
 \t"testing"
-
-\t"{import_path('internal/config')}"
 )
 
 type autoInstallFakeDoer map[string]string
@@ -589,14 +604,88 @@ func enabledBoolPtr(value bool) *bool {{
 \treturn &value
 }}
 
+type fakeAutoInstallPlugin struct {{
+\tEnabled *bool
+}}
+
+type fakeAutoInstallConfig struct {{
+\tProxyURL string
+\tEnabled bool
+\tDir string
+\tStoreSources []string
+\tConfigs map[string]fakeAutoInstallPlugin
+}}
+
+func (cfg *fakeAutoInstallConfig) NormalizePluginsConfig() {{
+\tif cfg == nil {{
+\t\treturn
+\t}}
+\tcfg.Dir = strings.TrimSpace(cfg.Dir)
+\tif cfg.Dir == "" {{
+\t\tcfg.Dir = "plugins"
+\t}}
+\tif len(cfg.StoreSources) > 0 {{
+\t\tsources := make([]string, 0, len(cfg.StoreSources))
+\t\tfor _, source := range cfg.StoreSources {{
+\t\t\tsource = strings.TrimSpace(source)
+\t\t\tif source == "" {{
+\t\t\t\tcontinue
+\t\t\t}}
+\t\t\tsources = append(sources, source)
+\t\t}}
+\t\tcfg.StoreSources = sources
+\t}}
+\tif cfg.Configs == nil {{
+\t\tcfg.Configs = map[string]fakeAutoInstallPlugin{{}}
+\t}}
+}}
+
+func (cfg *fakeAutoInstallConfig) PluginAutoInstallProxyURL() string {{
+\tif cfg == nil {{
+\t\treturn ""
+\t}}
+\treturn cfg.ProxyURL
+}}
+
+func (cfg *fakeAutoInstallConfig) PluginAutoInstallEnabled() bool {{
+\treturn cfg != nil && cfg.Enabled
+}}
+
+func (cfg *fakeAutoInstallConfig) PluginAutoInstallDir() string {{
+\tif cfg == nil {{
+\t\treturn ""
+\t}}
+\treturn cfg.Dir
+}}
+
+func (cfg *fakeAutoInstallConfig) PluginAutoInstallStoreSources() []string {{
+\tif cfg == nil || len(cfg.StoreSources) == 0 {{
+\t\treturn nil
+\t}}
+\treturn append([]string(nil), cfg.StoreSources...)
+}}
+
+func (cfg *fakeAutoInstallConfig) PluginAutoInstallEnabledIDs() []string {{
+\tif cfg == nil || len(cfg.Configs) == 0 {{
+\t\treturn nil
+\t}}
+\tids := make([]string, 0, len(cfg.Configs))
+\tfor id, item := range cfg.Configs {{
+\t\tif item.Enabled == nil || !*item.Enabled {{
+\t\t\tcontinue
+\t\t}}
+\t\tids = append(ids, id)
+\t}}
+\tsort.Strings(ids)
+\treturn ids
+}}
+
 func TestEnsureConfiguredPluginsInstalledSkipsDisabledGlobal(t *testing.T) {{
-\tcfg := &config.Config{{
-\t\tPlugins: config.PluginsConfig{{
-\t\t\tEnabled: false,
-\t\t\tDir: t.TempDir(),
-\t\t\tConfigs: map[string]config.PluginInstanceConfig{{
-\t\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(true)}},
-\t\t\t}},
+\tcfg := &fakeAutoInstallConfig{{
+\t\tEnabled: false,
+\t\tDir: t.TempDir(),
+\t\tConfigs: map[string]fakeAutoInstallPlugin{{
+\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(true)}},
 \t\t}},
 \t}}
 \tcalled := false
@@ -615,13 +704,11 @@ func TestEnsureConfiguredPluginsInstalledSkipsDisabledGlobal(t *testing.T) {{
 }}
 
 func TestEnsureConfiguredPluginsInstalledSkipsDisabledPlugin(t *testing.T) {{
-\tcfg := &config.Config{{
-\t\tPlugins: config.PluginsConfig{{
-\t\t\tEnabled: true,
-\t\t\tDir: t.TempDir(),
-\t\t\tConfigs: map[string]config.PluginInstanceConfig{{
-\t\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(false)}},
-\t\t\t}},
+\tcfg := &fakeAutoInstallConfig{{
+\t\tEnabled: true,
+\t\tDir: t.TempDir(),
+\t\tConfigs: map[string]fakeAutoInstallPlugin{{
+\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(false)}},
 \t\t}},
 \t}}
 \tcalled := false
@@ -648,13 +735,11 @@ func TestEnsureConfiguredPluginsInstalledSkipsInstalledPlugin(t *testing.T) {{
 \tif err := os.WriteFile(filepath.Join(targetDir, "sample-provider"+autoInstallPluginExtension(runtime.GOOS)), []byte("plugin"), 0o755); err != nil {{
 \t\tt.Fatalf("WriteFile() error = %v", err)
 \t}}
-\tcfg := &config.Config{{
-\t\tPlugins: config.PluginsConfig{{
-\t\t\tEnabled: true,
-\t\t\tDir: root,
-\t\t\tConfigs: map[string]config.PluginInstanceConfig{{
-\t\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(true)}},
-\t\t\t}},
+\tcfg := &fakeAutoInstallConfig{{
+\t\tEnabled: true,
+\t\tDir: root,
+\t\tConfigs: map[string]fakeAutoInstallPlugin{{
+\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(true)}},
 \t\t}},
 \t}}
 \tcalled := false
@@ -674,13 +759,11 @@ func TestEnsureConfiguredPluginsInstalledSkipsInstalledPlugin(t *testing.T) {{
 
 func TestEnsureConfiguredPluginsInstalledInstallsUniqueRegistryMatch(t *testing.T) {{
 \troot := t.TempDir()
-\tcfg := &config.Config{{
-\t\tPlugins: config.PluginsConfig{{
-\t\t\tEnabled: true,
-\t\t\tDir: root,
-\t\t\tConfigs: map[string]config.PluginInstanceConfig{{
-\t\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(true)}},
-\t\t\t}},
+\tcfg := &fakeAutoInstallConfig{{
+\t\tEnabled: true,
+\t\tDir: root,
+\t\tConfigs: map[string]fakeAutoInstallPlugin{{
+\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(true)}},
 \t\t}},
 \t}}
 \tfakeHTTP := autoInstallFakeDoer{{
@@ -714,14 +797,12 @@ func TestEnsureConfiguredPluginsInstalledInstallsUniqueRegistryMatch(t *testing.
 
 func TestEnsureConfiguredPluginsInstalledSkipsAmbiguousRegistryMatch(t *testing.T) {{
 \tsourceURL := "https://plugins.example/registry.json"
-\tcfg := &config.Config{{
-\t\tPlugins: config.PluginsConfig{{
-\t\t\tEnabled: true,
-\t\t\tDir: t.TempDir(),
-\t\t\tStoreSources: []string{{sourceURL}},
-\t\t\tConfigs: map[string]config.PluginInstanceConfig{{
-\t\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(true)}},
-\t\t\t}},
+\tcfg := &fakeAutoInstallConfig{{
+\t\tEnabled: true,
+\t\tDir: t.TempDir(),
+\t\tStoreSources: []string{{sourceURL}},
+\t\tConfigs: map[string]fakeAutoInstallPlugin{{
+\t\t\t"sample-provider": {{Enabled: enabledBoolPtr(true)}},
 \t\t}},
 \t}}
 \tregistry := `{{"schema_version":1,"plugins":[{{"id":"sample-provider","name":"Sample","description":"Sample plugin","author":"Tester","repository":"https://github.com/example/sample-provider"}}]}}`
