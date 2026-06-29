@@ -130,7 +130,24 @@ const parseGeminiCliCodeAssistPayload = (
       return null;
     }
   }
-  return typeof payload === 'object' ? (payload as GeminiCliCodeAssistPayload) : null;
+  if (typeof payload !== 'object') return null;
+
+  const record = payload as Record<string, unknown>;
+  if (
+    'currentTier' in record ||
+    'current_tier' in record ||
+    'paidTier' in record ||
+    'paid_tier' in record
+  ) {
+    return payload as GeminiCliCodeAssistPayload;
+  }
+
+  for (const key of ['body', 'bodyText', 'data', 'response', 'result']) {
+    const nested = parseGeminiCliCodeAssistPayload(record[key]);
+    if (nested) return nested;
+  }
+
+  return payload as GeminiCliCodeAssistPayload;
 };
 
 const normalizeGeminiCliModelId = (value: unknown): string | null => {
@@ -258,29 +275,41 @@ const resolveGeminiCliRemainingFraction = (bucket: GeminiCliQuotaBucket): number
   return null;
 };
 
-const fetchGeminiCliCodeAssist = async (
+const emptyGeminiCliSupplementary = (): Pick<
+  GeminiCliQuotaData,
+  'tierLabel' | 'tierId' | 'creditBalance'
+> => ({ tierLabel: null, tierId: null, creditBalance: null });
+
+const buildGeminiCliCodeAssistRequestBody = (projectId: string) =>
+  JSON.stringify({
+    cloudaicompanionProject: projectId,
+    metadata: {
+      ideType: 'IDE_UNSPECIFIED',
+      platform: 'PLATFORM_UNSPECIFIED',
+      pluginType: 'GEMINI',
+      duetProject: projectId,
+    },
+  });
+
+const fetchGeminiCliCodeAssistOnce = async (
   authIndex: string,
   projectId: string,
-  t: TFunction
+  t: TFunction,
+  useExecutor: boolean
 ): Promise<Pick<GeminiCliQuotaData, 'tierLabel' | 'tierId' | 'creditBalance'>> => {
   const result = await apiCallApi.request({
     authIndex,
     method: 'POST',
     url: GEMINI_CLI_CODE_ASSIST_URL,
-    header: { ...GEMINI_CLI_REQUEST_HEADERS },
-    data: JSON.stringify({
-      cloudaicompanionProject: projectId,
-      metadata: {
-        ideType: 'IDE_UNSPECIFIED',
-        platform: 'PLATFORM_UNSPECIFIED',
-        pluginType: 'GEMINI',
-        duetProject: projectId,
-      },
-    }),
+    header: useExecutor
+      ? { 'Content-Type': 'application/json' }
+      : { ...GEMINI_CLI_REQUEST_HEADERS },
+    data: buildGeminiCliCodeAssistRequestBody(projectId),
+    ...(useExecutor ? { useExecutor: true } : {}),
   });
 
   if (result.statusCode < 200 || result.statusCode >= 300) {
-    return { tierLabel: null, tierId: null, creditBalance: null };
+    return emptyGeminiCliSupplementary();
   }
 
   const payload = parseGeminiCliCodeAssistPayload(result.body ?? result.bodyText);
@@ -289,6 +318,27 @@ const fetchGeminiCliCodeAssist = async (
     tierId: resolveGeminiCliTierId(payload),
     creditBalance: resolveGeminiCliCreditBalance(payload),
   };
+};
+
+const hasGeminiCliSupplementaryData = (
+  data: Pick<GeminiCliQuotaData, 'tierLabel' | 'tierId' | 'creditBalance'>
+): boolean => data.tierLabel !== null || data.tierId !== null || data.creditBalance !== null;
+
+const fetchGeminiCliCodeAssist = async (
+  authIndex: string,
+  projectId: string,
+  t: TFunction
+): Promise<Pick<GeminiCliQuotaData, 'tierLabel' | 'tierId' | 'creditBalance'>> => {
+  const executorResult = await fetchGeminiCliCodeAssistOnce(authIndex, projectId, t, true).catch(
+    emptyGeminiCliSupplementary
+  );
+  if (hasGeminiCliSupplementaryData(executorResult)) {
+    return executorResult;
+  }
+
+  return fetchGeminiCliCodeAssistOnce(authIndex, projectId, t, false).catch(
+    emptyGeminiCliSupplementary
+  );
 };
 
 const readGeminiCliSupplementarySnapshot = (
