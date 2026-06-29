@@ -1223,10 +1223,16 @@ const resolveQuotaErrorMessage = (t: TFunction, quota?: QuotaStatusState): strin
 const hasUsableQuotaContent = (quota?: QuotaStatusState) => {
   if (!quota || quota.status !== 'success') return false;
   const record = quota as unknown as Record<string, unknown>;
+  const billing = record.billing;
   return ['groups', 'windows', 'buckets', 'rows'].some((key) => {
     const value = record[key];
     return Array.isArray(value) && value.length > 0;
-  }) || Boolean(record.planType || record.tierLabel || record.creditBalance !== undefined);
+  }) || Boolean(
+    record.planType
+    || record.tierLabel
+    || record.creditBalance !== undefined
+    || (billing && typeof billing === 'object' && !Array.isArray(billing))
+  );
 };
 
 const getQuotaForTarget = (store: QuotaStore, target: AccountQuotaTarget): QuotaStatusState | undefined => {
