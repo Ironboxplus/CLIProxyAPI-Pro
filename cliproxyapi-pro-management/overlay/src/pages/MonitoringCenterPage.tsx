@@ -3566,13 +3566,8 @@ export function MonitoringCenterPage() {
 
   const {
     usage,
-    loading: usageLoading,
-    refreshing: usageRefreshing,
     error: usageError,
-    lastRefreshedAt,
-    lastEventAt,
     latestId,
-    syncStatus,
     modelPrices,
     setModelPrices,
     refreshUsage,
@@ -3600,7 +3595,6 @@ export function MonitoringCenterPage() {
 
   const {
     data: usageAggregates,
-    refreshing: aggregatesRefreshing,
     error: aggregatesError,
     refresh: refreshAggregates,
   } = useUsageAggregates({
@@ -3838,22 +3832,7 @@ export function MonitoringCenterPage() {
   useHeaderRefresh(refreshAll);
 
   const combinedError = [usageError, monitoringError, realtimeLogError].filter(Boolean).join('；');
-  const isMonitoringRefreshing = usageRefreshing || aggregatesRefreshing || realtimeLogLoading;
-  const syncStatusText = syncStatus === 'live'
-    ? t('monitoring.sync_live', { defaultValue: 'Live' })
-    : syncStatus === 'paused'
-      ? t('monitoring.sync_paused', { defaultValue: 'Paused in background' })
-      : syncStatus === 'reconnecting'
-        ? t('monitoring.sync_reconnecting', { defaultValue: 'Reconnecting' })
-        : syncStatus === 'error'
-          ? t('monitoring.sync_error', { defaultValue: 'Sync error' })
-          : t('monitoring.syncing', { defaultValue: 'Syncing' });
-  const syncStatusTone = syncStatus === 'live' ? 'good' : syncStatus === 'error' ? 'bad' : 'warn';
-  const syncTimestamp = lastEventAt ?? lastRefreshedAt;
   const hasPrices = Object.keys(modelPrices).length > 0;
-  const usageDetailsCount = Number(deferredUsage?.details_count ?? allRows.length);
-  const usageTotalRequests = Number(deferredUsage?.total_requests ?? usageDetailsCount);
-  const usageDetailsLimited = Boolean(deferredUsage?.details_limited) && usageTotalRequests > usageDetailsCount;
   const pendingRealtimeEventCount = realtimeLogSnapshotMaxId > 0 ? Math.max(latestId - realtimeLogSnapshotMaxId, 0) : 0;
 
   useEffect(() => {
@@ -4769,45 +4748,6 @@ export function MonitoringCenterPage() {
             </div>
           </div>
           <p className={styles.subtitle}>{t('monitoring.console_subtitle')}</p>
-          <div className={styles.mastheadMetaRow}>
-            <div className={styles.monitoringSyncRow}>
-              <span className={`${styles.syncPill} ${styles[`tone${syncStatusTone}`]}`}>
-                {syncStatusText}
-              </span>
-              {syncTimestamp ? (
-                <span className={styles.syncTimestamp}>
-                  {t('monitoring.sync_last_event', {
-                    value: syncTimestamp.toLocaleString(i18n.language),
-                    defaultValue: `Last event: ${syncTimestamp.toLocaleString(i18n.language)}`,
-                  })}
-                </span>
-              ) : null}
-              <button
-                type="button"
-                className={styles.refreshButton}
-                onClick={() => void refreshAll()}
-                disabled={isMonitoringRefreshing || usageLoading || connectionStatus !== 'connected'}
-              >
-                <IconRefreshCw size={14} className={isMonitoringRefreshing ? styles.refreshIconSpinning : styles.refreshIcon} />
-                <span className={styles.refreshButtonLabel}>
-                  {isMonitoringRefreshing
-                    ? t('monitoring.syncing', { defaultValue: 'Syncing' })
-                    : t('monitoring.refresh', { defaultValue: 'Refresh' })}
-                </span>
-              </button>
-            </div>
-            {usageDetailsLimited ? (
-              <div className={`${styles.inlineMetrics} ${styles.coverageMetrics}`}>
-                <span>
-                  {t('monitoring.request_events_coverage_hint', {
-                    shown: usageDetailsCount,
-                    total: usageTotalRequests,
-                    defaultValue: `Statistics cover all ${usageTotalRequests} requests; the live detail cache keeps the latest ${usageDetailsCount}.`,
-                  })}
-                </span>
-              </div>
-            ) : null}
-          </div>
 
           <div className={styles.usageStatsHero}>
             <TopUsageStats cards={usageMetricCards} />
@@ -4816,7 +4756,7 @@ export function MonitoringCenterPage() {
       </section>
 
       {!isUsageTrendHidden ? (
-        <section className={`${styles.usageTrendSection} ${aggregatesRefreshing ? styles.analyticsRefreshing : ''}`} aria-busy={aggregatesRefreshing}>
+        <section className={styles.usageTrendSection}>
           <UsageTrendHeader
             range={timeRange}
             totalCalls={usageTrendAnalytics.scopedTotals.requests}
