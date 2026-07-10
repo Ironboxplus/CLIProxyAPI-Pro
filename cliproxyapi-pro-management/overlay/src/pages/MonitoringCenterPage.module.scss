@@ -3897,10 +3897,68 @@
 
 .accountOverviewCardBody .quotaEntryCard {
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
   padding: 12px;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
   background: color-mix(in srgb, var(--monitor-surface) 78%, var(--monitor-surface-elevated));
+}
+
+.accountQuotaContent,
+.accountQuotaRow,
+.accountQuotaRowHeader,
+.accountQuotaMeta,
+.accountQuotaPlanValue,
+.accountQuotaPremiumPlanValue,
+.accountQuotaResetCreditRow,
+.accountQuotaResetCreditTime {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.accountQuotaContent,
+.accountQuotaRow {
+  width: 100%;
+}
+
+.accountQuotaRowHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  align-items: start;
+  gap: 4px;
+}
+
+.accountQuotaMeta {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-start;
+  flex-wrap: wrap;
+  gap: 2px 8px;
+  width: 100%;
+  line-height: 1.4;
+  white-space: normal;
+}
+
+.accountQuotaPlanValue {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.accountQuotaPremiumPlanValue {
+  overflow-wrap: anywhere;
+  text-align: center;
+  white-space: normal;
+}
+
+.accountQuotaResetCreditRow {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.accountQuotaResetCreditTime {
+  flex: 1 1 140px;
+  text-align: left;
 }
 
 .realtimeTable .primaryCell small {

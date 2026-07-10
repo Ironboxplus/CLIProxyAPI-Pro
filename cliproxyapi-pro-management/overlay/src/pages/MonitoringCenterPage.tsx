@@ -46,7 +46,9 @@ import {
   type QuotaConfig,
   type QuotaStore,
 } from '@/components/quota/quotaConfigs';
-import { QuotaProgressBar, type QuotaRenderHelpers, type QuotaStatusState } from '@/components/quota/QuotaCard';
+import { type QuotaRenderHelpers, type QuotaStatusState } from '@/components/quota/QuotaCard';
+import { QuotaProgressBar as AuthFileQuotaProgressBar } from '@/features/authFiles/components/QuotaProgressBar';
+import authFileQuotaStyles from '@/pages/AuthFilesPage.module.scss';
 import quotaStyles from '@/pages/QuotaPage.module.scss';
 import styles from './MonitoringCenterPage.module.scss';
 
@@ -1770,9 +1772,18 @@ const buildRealtimeDiagnosticClipboardText = (
   return fields.map(([label, value]) => `${label}: ${maskSensitiveText(String(value ?? '-'))}`).join('\n');
 };
 
-const QUOTA_RENDER_HELPERS: QuotaRenderHelpers = {
-  styles: quotaStyles,
-  QuotaProgressBar,
+const ACCOUNT_QUOTA_RENDER_HELPERS: QuotaRenderHelpers = {
+  styles: {
+    ...authFileQuotaStyles,
+    quotaRow: `${authFileQuotaStyles.quotaRow} ${styles.accountQuotaRow}`,
+    quotaRowHeader: `${authFileQuotaStyles.quotaRowHeader} ${styles.accountQuotaRowHeader}`,
+    quotaMeta: `${authFileQuotaStyles.quotaMeta} ${styles.accountQuotaMeta}`,
+    codexPlanValue: `${authFileQuotaStyles.codexPlanValue} ${styles.accountQuotaPlanValue}`,
+    premiumPlanValue: `${authFileQuotaStyles.premiumPlanValue} ${styles.accountQuotaPremiumPlanValue}`,
+    codexResetCreditRow: `${authFileQuotaStyles.codexResetCreditRow} ${styles.accountQuotaResetCreditRow}`,
+    codexResetCreditTime: `${authFileQuotaStyles.codexResetCreditTime} ${styles.accountQuotaResetCreditTime}`,
+  },
+  QuotaProgressBar: AuthFileQuotaProgressBar,
 };
 
 const getQuotaProviderLabel = (config: AnyQuotaConfig, t: TFunction) => {
@@ -3041,8 +3052,8 @@ function AccountQuotaPanel({
                   {t(`${entry.config.i18nPrefix}.load_failed`, { message: resolveQuotaErrorMessage(t, entry.quota) })}
                 </div>
               ) : hasUsableQuotaContent(entry.quota) ? (
-                <div className={quotaStyles.quotaSection}>
-                  {entry.config.renderQuotaItems(entry.quota!, t, QUOTA_RENDER_HELPERS)}
+                <div className={`${authFileQuotaStyles.quotaSection} ${styles.accountQuotaContent}`}>
+                  {entry.config.renderQuotaItems(entry.quota!, t, ACCOUNT_QUOTA_RENDER_HELPERS)}
                 </div>
               ) : (
                 <div className={styles.quotaStateMessage}>{t(`${entry.config.i18nPrefix}.idle`)}</div>
