@@ -371,6 +371,15 @@
   justify-self: end;
 }
 
+.resultToolbar {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
 .operationModuleHeader h2 {
   margin: 0;
   color: var(--inspect-ink);
@@ -3006,6 +3015,10 @@
   .resultFilterControl {
     width: fit-content;
     max-width: 100%;
+  }
+
+  .resultToolbar {
+    justify-content: flex-start;
   }
 
   .heroActions,

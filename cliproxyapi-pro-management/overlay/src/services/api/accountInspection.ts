@@ -74,6 +74,7 @@ export type AccountInspectionDetailsOptions = {
   resultPage?: number;
   resultPageSize?: number;
   resultFilter?: string;
+  resultProvider?: string;
   logPage?: number;
   logPageSize?: number;
   logLevel?: string;
@@ -87,6 +88,7 @@ const buildAccountInspectionDetailParams = (options: boolean | AccountInspection
   if (normalized.resultPage !== undefined) params.result_page = normalized.resultPage;
   if (normalized.resultPageSize !== undefined) params.result_page_size = normalized.resultPageSize;
   if (normalized.resultFilter) params.result_filter = normalized.resultFilter;
+  if (normalized.resultProvider) params.result_provider = normalized.resultProvider;
   if (normalized.logPage !== undefined) params.log_page = normalized.logPage;
   if (normalized.logPageSize !== undefined) params.log_page_size = normalized.logPageSize;
   if (normalized.logLevel) params.log_level = normalized.logLevel;

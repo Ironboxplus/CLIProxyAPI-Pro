@@ -610,7 +610,6 @@ const renderGeminiCliItems = (
 export const GEMINI_CLI_CONFIG = {
   type: 'gemini-cli',
   i18nPrefix: 'gemini_cli_quota',
-  cardIdleMessageKey: 'quota_management.card_idle_hint',
   filterFn: (file: AuthFileItem) =>
     isGeminiCliFile(file) && !isRuntimeOnlyAuthFile(file) && !isDisabledAuthFile(file),
   fetchQuota: fetchGeminiCliQuota,
@@ -651,8 +650,6 @@ export const GEMINI_CLI_CONFIG = {
     errorStatus: status,
   }),
   cardClassName: styles.geminiCliCard,
-  controlsClassName: styles.geminiCliControls,
-  controlClassName: styles.geminiCliControl,
   gridClassName: styles.geminiCliGrid,
   renderQuotaItems: renderGeminiCliItems,
 } satisfies QuotaConfig<GeminiCliQuotaState, GeminiCliQuotaData>;

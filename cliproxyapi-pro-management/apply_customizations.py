@@ -175,6 +175,13 @@ def replace_once(path: Path, old: str, new: str) -> None:
     write(path, text.replace(old, new, 1))
 
 
+def replace_once_if_present(path: Path, old: str, new: str) -> None:
+    text = read(path)
+    if new in text or old not in text:
+        return
+    write(path, text.replace(old, new, 1))
+
+
 def replace_all(path: Path, old: str, new: str) -> None:
     text = read(path)
     if old not in text:
@@ -278,13 +285,13 @@ def patch_layout(target: Path) -> None:
     insert_once(
         path,
         "  IconSidebarProviders,\n",
-        "  IconSidebarMonitor,\n  IconSidebarProviders,\n",
-        "  IconSidebarMonitor,\n",
+        "  IconSidebarAccountInspection,\n  IconSidebarMonitor,\n  IconSidebarProviders,\n",
+        "  IconSidebarAccountInspection,\n",
     )
     replace_once(
         path,
         "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n",
-        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n",
+        "  oauth: <IconSidebarOauth size={18} />,\n  quota: <IconSidebarQuota size={18} />,\n  monitoring: <IconSidebarMonitor size={18} />,\n  accountInspection: <IconSidebarAccountInspection size={18} />,\n",
     )
     text = read(path)
     if "path: '/monitoring'" not in text:
@@ -304,7 +311,7 @@ def patch_layout(target: Path) -> None:
                     flat_quota_item,
                     flat_quota_item
                     + "    { path: '/monitoring', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring },\n"
-                    + "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.monitoring },\n",
+                    + "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
                     1,
                 ),
             )
@@ -324,13 +331,33 @@ def patch_layout(target: Path) -> None:
                     + "          path: '/account-inspection',\n"
                     + "          labelKey: 'nav.account_inspection',\n"
                     + "          metaKey: 'nav_meta.account_inspection',\n"
-                    + "          icon: sidebarIcons.monitoring,\n"
+                    + "          icon: sidebarIcons.accountInspection,\n"
                     + "        },\n",
                     1,
                 ),
             )
         else:
             raise RuntimeError(f'Pattern not found in {path}: quota navigation item')
+    replace_once_if_present(
+        path,
+        "        {\n"
+        "          path: '/account-inspection',\n"
+        "          labelKey: 'nav.account_inspection',\n"
+        "          metaKey: 'nav_meta.account_inspection',\n"
+        "          icon: sidebarIcons.monitoring,\n"
+        "        },\n",
+        "        {\n"
+        "          path: '/account-inspection',\n"
+        "          labelKey: 'nav.account_inspection',\n"
+        "          metaKey: 'nav_meta.account_inspection',\n"
+        "          icon: sidebarIcons.accountInspection,\n"
+        "        },\n",
+    )
+    replace_once_if_present(
+        path,
+        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.monitoring },\n",
+        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
+    )
     replace_once(
         path,
         "            <PageTransition\n",
@@ -339,12 +366,57 @@ def patch_layout(target: Path) -> None:
 
 def patch_icons(target: Path) -> None:
     path = target / 'src/components/ui/icons.tsx'
-    insert_once(
-        path,
-        "export function IconSidebarLogs({ size = 20, ...props }: IconProps) {\n",
-        "export function IconSidebarMonitor({ size = 20, ...props }: IconProps) {\n  return (\n    <svg {...sidebarSvgProps} width={size} height={size} {...props}>\n      <path d=\"M3 12h3l2.2-4.5 4.2 9 2.4-5h6.2\" />\n      <path d=\"M4 19h16\" />\n      <path d=\"M4 5h16\" fill=\"currentColor\" fillOpacity=\"0.08\" />\n    </svg>\n  );\n}\n\nexport function IconSidebarLogs({ size = 20, ...props }: IconProps) {\n",
-        "export function IconSidebarMonitor",
+    text = read(path)
+
+    if "baseSvgProps" in text:
+        svg_props = "baseSvgProps"
+    elif "sidebarSvgProps" in text:
+        svg_props = "sidebarSvgProps"
+    else:
+        raise RuntimeError(f'Pattern not found in {path}: svg props constant')
+
+    monitor_icon = (
+        "export function IconSidebarMonitor({ size = 20, ...props }: IconProps) {\n"
+        "  return (\n"
+        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
+        "      <path d=\"M3 12h3l2.2-4.5 4.2 9 2.4-5h6.2\" />\n"
+        "      <path d=\"M4 19h16\" />\n"
+        "      <path d=\"M4 5h16\" fill=\"currentColor\" fillOpacity=\"0.08\" />\n"
+        "    </svg>\n"
+        "  );\n"
+        "}\n\n"
     )
+    account_inspection_icon = (
+        "export function IconSidebarAccountInspection({ size = 20, ...props }: IconProps) {\n"
+        "  return (\n"
+        f"    <svg {{...{svg_props}}} width={{size}} height={{size}} {{...props}}>\n"
+        "      <rect x=\"5\" y=\"3\" width=\"11\" height=\"16\" rx=\"2\" />\n"
+        "      <path d=\"M9 7h3\" />\n"
+        "      <path d=\"m8.5 11 1.4 1.4 2.6-2.8\" />\n"
+        "      <circle cx=\"16.5\" cy=\"16.5\" r=\"3\" />\n"
+        "      <path d=\"m19 19 2 2\" />\n"
+        "      <path d=\"M8 3.5h5\" fill=\"currentColor\" fillOpacity=\"0.08\" />\n"
+        "    </svg>\n"
+        "  );\n"
+        "}\n\n"
+    )
+    icons_to_insert = ""
+    if "export function IconSidebarMonitor" not in text:
+        icons_to_insert += monitor_icon
+    if "export function IconSidebarAccountInspection" not in text:
+        icons_to_insert += account_inspection_icon
+    if not icons_to_insert:
+        return
+    for marker in (
+        "export function IconSidebarLogs({ size = 20, ...props }: IconProps) {\n",
+        "export const IconSidebarLogs = ",
+        "export function IconSidebarSystem({ size = 20, ...props }: IconProps) {\n",
+    ):
+        if marker in text:
+            write(path, text.replace(marker, icons_to_insert + marker, 1))
+            return
+
+    write(path, text.rstrip() + "\n\n" + icons_to_insert)
 
 
 def patch_quota_types(target: Path) -> None:
@@ -424,6 +496,18 @@ def patch_quota_configs(target: Path) -> None:
         (
             "        ...group.buckets.map((bucket) => {\n",
             "        ...(Array.isArray(group.buckets) ? group.buckets : []).map((bucket) => {\n",
+        ),
+        (
+            "  const clampedUsed =\n",
+            "  const productUsageItems = Array.isArray(billing.productUsage) ? billing.productUsage : [];\n\n  const clampedUsed =\n",
+        ),
+        (
+            "    (weeklyUsed !== null || Boolean(billing.periodEnd) || billing.productUsage.length > 0);\n",
+            "    (weeklyUsed !== null || Boolean(billing.periodEnd) || productUsageItems.length > 0);\n",
+        ),
+        (
+            "    ...billing.productUsage.map((item) => {\n",
+            "    ...productUsageItems.map((item) => {\n",
         ),
     ]:
         replace_once(path, old, new)
@@ -547,6 +631,11 @@ def patch_antigravity_quota_builders(target: Path) -> None:
         "        description: normalizeStringValue(group.description) ?? undefined,\n",
         "        description,\n",
     )
+    replace_once(
+        path,
+        "    productUsage: primary.productUsage.length > 0 ? primary.productUsage : fallback.productUsage,\n",
+        "    productUsage: Array.isArray(primary.productUsage) && primary.productUsage.length > 0\n      ? primary.productUsage\n      : Array.isArray(fallback.productUsage)\n        ? fallback.productUsage\n        : [],\n",
+    )
 
 
 def patch_quota_styles(target: Path) -> None:
@@ -556,12 +645,12 @@ def patch_quota_styles(target: Path) -> None:
         ".codexGrid,\n.kimiGrid,",
         ".codexGrid,\n.geminiCliGrid,\n.kimiGrid,",
     )
-    replace_once(
+    replace_once_if_present(
         path,
         ".codexControls,\n.kimiControls,",
         ".codexControls,\n.geminiCliControls,\n.kimiControls,",
     )
-    replace_once(
+    replace_once_if_present(
         path,
         ".codexControl,\n.kimiControl,",
         ".codexControl,\n.geminiCliControl,\n.kimiControl,",
@@ -571,6 +660,20 @@ def patch_quota_styles(target: Path) -> None:
         ".kimiCard {\n",
         ".geminiCliCard {\n  background-image: linear-gradient(180deg, rgba(224, 232, 255, 0.2), rgba(224, 232, 255, 0));\n}\n\n.kimiCard {\n",
         ".geminiCliCard",
+    )
+
+
+def patch_account_inspection_page(target: Path) -> None:
+    path = target / 'src/pages/AccountInspectionPage.tsx'
+    replace_once_if_present(
+        path,
+        "  const used = normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent);\n"
+        "  return used !== null && used >= usedPercentThreshold;\n",
+        "  const used =\n"
+        "    normalizeNumberValue(quota.billing.usagePercent ?? quota.billing.usage_percent)\n"
+        "    ?? normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent)\n"
+        "    ?? maxAntigravityGroupUsedPercent(Array.isArray(quota.billing.productUsage) ? quota.billing.productUsage : []);\n"
+        "  return used !== null && used >= usedPercentThreshold;\n",
     )
 
 
@@ -1000,6 +1103,7 @@ def main() -> None:
     patch_quota_page(target)
     patch_quota_card(target)
     patch_quota_styles(target)
+    patch_account_inspection_page(target)
     patch_auth_files_page_search(target)
     patch_supporting_api_and_types(target)
     patch_locales(target)

@@ -48,7 +48,7 @@ const (
 	accountInspectionProgressBroadcastGap   = 500 * time.Millisecond
 	accountInspectionMaxResultPageSize      = 500
 	accountInspectionMaxLogPageSize         = 500
-	accountInspectionQuotaParserVersion     = 3
+	accountInspectionQuotaParserVersion     = 4
 )
 
 var accountInspectionWebSocketUpgrader = websocket.Upgrader{
@@ -241,6 +241,7 @@ type accountInspectionSnapshotOptions struct {
 	ResultPage     int
 	ResultPageSize int
 	ResultFilter   string
+	ResultProvider string
 	LogPage        int
 	LogPageSize    int
 	LogLevel       string
@@ -549,6 +550,7 @@ func accountInspectionRequestSnapshotOptions(c *gin.Context) accountInspectionSn
 		ResultPage:     parseAccountInspectionQueryInt(c, "result_page", 1),
 		ResultPageSize: resultPageSize,
 		ResultFilter:   strings.ToLower(strings.TrimSpace(c.Query("result_filter"))),
+		ResultProvider: strings.ToLower(strings.TrimSpace(c.Query("result_provider"))),
 		LogPage:        parseAccountInspectionQueryInt(c, "log_page", 1),
 		LogPageSize:    logPageSize,
 		LogLevel:       strings.ToLower(strings.TrimSpace(c.Query("log_level"))),
@@ -662,6 +664,11 @@ func accountInspectionResultMatchesFilter(result accountInspectionResult, filter
 	}
 }
 
+func accountInspectionResultMatchesProvider(result accountInspectionResult, provider string) bool {
+	provider = strings.ToLower(strings.TrimSpace(provider))
+	return provider == "" || provider == accountInspectionProviderAll || strings.EqualFold(result.Provider, provider)
+}
+
 func minInt(left int, right int) int {
 	if left < right {
 		return left
@@ -734,12 +741,12 @@ func paginateAccountInspectionLogs(logs []accountInspectionLogEntry, page int, p
 	return append([]accountInspectionLogEntry(nil), filtered[start:end]...), info
 }
 
-func paginateAccountInspectionResults(results []accountInspectionResult, page int, pageSize int, filter string) ([]accountInspectionResult, accountInspectionPageInfo) {
+func paginateAccountInspectionResults(results []accountInspectionResult, page int, pageSize int, filter string, provider string) ([]accountInspectionResult, accountInspectionPageInfo) {
 	page = normalizeAccountInspectionPage(page)
 	pageSize = normalizeAccountInspectionPageSize(pageSize, 100, accountInspectionMaxResultPageSize)
 	filtered := make([]accountInspectionResult, 0, len(results))
 	for _, result := range results {
-		if accountInspectionResultMatchesFilter(result, filter) {
+		if accountInspectionResultMatchesFilter(result, filter) && accountInspectionResultMatchesProvider(result, provider) {
 			filtered = append(filtered, result)
 		}
 	}
@@ -758,7 +765,7 @@ func (s *accountInspectionScheduler) streamStatusLocked(options accountInspectio
 	if options.IncludeDetails {
 		healthCounts := s.healthCountsLocked()
 		logs, logsPage := paginateAccountInspectionLogs(s.status.Logs, options.LogPage, options.LogPageSize, options.LogLevel)
-		results, resultsPage := paginateAccountInspectionResults(s.status.Results, options.ResultPage, options.ResultPageSize, options.ResultFilter)
+		results, resultsPage := paginateAccountInspectionResults(s.status.Results, options.ResultPage, options.ResultPageSize, options.ResultFilter, options.ResultProvider)
 		status.HealthCounts = &healthCounts
 		status.Logs = logs
 		status.Results = results
@@ -2293,31 +2300,82 @@ func (s *accountInspectionScheduler) inspectKimi(ctx context.Context, account ac
 }
 
 func (s *accountInspectionScheduler) inspectXAI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
+	headers := xaiRequestHeaders(account.Auth)
+	weeklyBilling, weeklyResp, weeklyErr := s.fetchXAIBillingSummary(ctx, account, settings, xaiBillingWeeklyURL(), headers)
+	monthlyBilling, monthlyResp, monthlyErr := s.fetchXAIBillingSummary(ctx, account, settings, xaiBillingURL(), headers)
+	status := firstInspectionStatus(monthlyResp.StatusCode, weeklyResp.StatusCode)
+	billing := mergeXAIBillingSummaries(weeklyBilling, monthlyBilling)
+	if billing == nil {
+		if isAccountErrorStatus(weeklyResp.StatusCode) {
+			return authErrorDecision(account, weeklyResp.StatusCode), status, nil
+		}
+		if isAccountErrorStatus(monthlyResp.StatusCode) {
+			return authErrorDecision(account, monthlyResp.StatusCode), status, nil
+		}
+		if weeklyErr != nil {
+			return accountInspectionDecision{}, status, weeklyErr
+		}
+		if monthlyErr != nil {
+			return accountInspectionDecision{}, status, monthlyErr
+		}
+		return accountInspectionDecision{}, status, fmt.Errorf("empty xai billing config")
+	}
+	used := xaiSummaryUsedPercent(billing)
+	s.persistQuotaState(ctx, account, quotaSuccessState(map[string]any{
+		"billing":             billing,
+		"rawShapeHash":        jsonShapeHashForBodies(map[string]string{"weekly": weeklyResp.Body, "monthly": monthlyResp.Body}),
+		"weeklyRawShapeHash":  jsonShapeHash(weeklyResp.Body),
+		"monthlyRawShapeHash": jsonShapeHash(monthlyResp.Body),
+	}))
+	return quotaDecision(account, used, billing != nil, settings.UsedPercentThreshold), status, nil
+}
+
+func (s *accountInspectionScheduler) fetchXAIBillingSummary(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, url string, headers map[string]string) (map[string]any, accountInspectionHTTPResult, error) {
 	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
-		return s.apiCall(ctx, account.Auth, http.MethodGet, xaiBillingURL(), map[string]string{
-			"Authorization": "Bearer $TOKEN$",
-		}, "", settings.Timeout)
+		return s.apiCall(ctx, account.Auth, http.MethodGet, url, headers, "", settings.Timeout)
 	})
-	status := intPtr(resp.StatusCode)
 	if err != nil {
-		return accountInspectionDecision{}, status, err
+		return nil, resp, err
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		if isAccountErrorStatus(resp.StatusCode) {
-			return authErrorDecision(account, resp.StatusCode), status, nil
-		}
-		return accountInspectionDecision{}, status, fmt.Errorf("HTTP %d", resp.StatusCode)
+		return nil, resp, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
-	billing, used, err := buildXAIBillingSummary(resp.Body)
+	billing, _, err := buildXAIBillingSummary(resp.Body)
 	if err != nil {
-		return accountInspectionDecision{}, status, err
+		return nil, resp, err
 	}
-	s.persistQuotaState(ctx, account, quotaSuccessState(map[string]any{"billing": billing, "rawShapeHash": jsonShapeHash(resp.Body)}))
-	return quotaDecision(account, used, billing != nil, settings.UsedPercentThreshold), status, nil
+	return billing, resp, nil
 }
 
 func xaiBillingURL() string {
 	return "https://cli-chat-proxy.grok.com/v1/billing"
+}
+
+func xaiBillingWeeklyURL() string {
+	return "https://cli-chat-proxy.grok.com/v1/billing?format=credits"
+}
+
+func xaiRequestHeaders(auth *coreauth.Auth) map[string]string {
+	headers := map[string]string{
+		"Authorization":         "Bearer $TOKEN$",
+		"x-xai-token-auth":      "xai-grok-cli",
+		"x-grok-client-version": "0.2.91",
+		"accept":                "*/*",
+		"user-agent":            "grok-pager/0.2.91 grok-shell/0.2.91 (macos; aarch64)",
+	}
+	if userID := xaiUserID(auth); userID != "" {
+		headers["x-userid"] = userID
+	}
+	return headers
+}
+
+func firstInspectionStatus(values ...int) *int {
+	for _, value := range values {
+		if value != 0 {
+			return intPtr(value)
+		}
+	}
+	return nil
 }
 
 func (s *accountInspectionScheduler) antigravityUserAgent() string {
@@ -3165,6 +3223,30 @@ func jsonShapeHash(body string) string {
 		return ""
 	}
 	sum := sha256.Sum256(shape)
+	return hex.EncodeToString(sum[:])
+}
+
+func jsonShapeHashForBodies(bodies map[string]string) string {
+	shape := make(map[string]any, len(bodies))
+	for key, body := range bodies {
+		body = strings.TrimSpace(body)
+		if body == "" {
+			continue
+		}
+		var payload any
+		if err := json.Unmarshal([]byte(body), &payload); err != nil {
+			continue
+		}
+		shape[key] = jsonShape(payload)
+	}
+	if len(shape) == 0 {
+		return ""
+	}
+	encoded, err := json.Marshal(shape)
+	if err != nil {
+		return ""
+	}
+	sum := sha256.Sum256(encoded)
 	return hex.EncodeToString(sum[:])
 }
 
@@ -4116,24 +4198,89 @@ func buildXAIBillingSummary(body string) (map[string]any, *float64, error) {
 	if config == nil {
 		return nil, nil, fmt.Errorf("empty xai billing config")
 	}
+	return buildXAIBillingSummaryFromConfig(config)
+}
+
+func buildXAIBillingSummaryFromConfig(config map[string]any) (map[string]any, *float64, error) {
 	monthlyLimitCents, hasMonthlyLimit := xaiCentValue(firstAny(config, "monthlyLimit", "monthly_limit"))
 	usedCents, hasUsed := xaiCentValue(config["used"])
 	onDemandCapCents, hasOnDemandCap := xaiCentValue(firstAny(config, "onDemandCap", "on_demand_cap"))
+	explicitOnDemandUsedCents, hasExplicitOnDemandUsed := xaiCentValue(firstAny(config, "onDemandUsed", "on_demand_used"))
+	currentPeriod := firstMap(config, "currentPeriod", "current_period")
+	periodType := xaiPeriodType(currentPeriod)
+	creditUsagePercent, hasCreditUsagePercent := floatFromAny(firstAny(config, "creditUsagePercent", "credit_usage_percent"))
+	productUsage := xaiProductUsage(firstAny(config, "productUsage", "product_usage"))
 	billingPeriodStart := firstNonEmptyStringValue(stringFromAny(firstAny(config, "billingPeriodStart", "billing_period_start")))
 	billingPeriodEnd := firstNonEmptyStringValue(stringFromAny(firstAny(config, "billingPeriodEnd", "billing_period_end")))
-	if !hasMonthlyLimit && !hasUsed && !hasOnDemandCap && billingPeriodEnd == "" {
+	periodStart := firstNonEmptyStringValue(stringFromAny(currentPeriod["start"]), billingPeriodStart)
+	periodEnd := firstNonEmptyStringValue(stringFromAny(currentPeriod["end"]), billingPeriodEnd)
+	hasWeeklyData := hasCreditUsagePercent || periodType == "weekly" || len(productUsage) > 0
+	hasMonthlyData := hasMonthlyLimit || hasUsed || (!hasWeeklyData && (hasOnDemandCap || billingPeriodEnd != ""))
+	if !hasWeeklyData && !hasMonthlyData {
 		return nil, nil, fmt.Errorf("empty xai billing config")
 	}
+	summary := map[string]any{
+		"periodType":          "unknown",
+		"usagePercent":        nil,
+		"productUsage":        productUsage,
+		"monthlyLimitCents":   nil,
+		"usedCents":           nil,
+		"includedUsedCents":   nil,
+		"onDemandCapCents":    nil,
+		"onDemandUsedCents":   nil,
+		"onDemandUsedPercent": nil,
+		"usedPercent":         nil,
+	}
+	var includedUsedCents *float64
+	if hasUsed {
+		value := usedCents
+		if hasMonthlyLimit && monthlyLimitCents > 0 {
+			value = math.Min(usedCents, monthlyLimitCents)
+		}
+		includedUsedCents = &value
+	}
+	var onDemandUsedCents *float64
+	if hasExplicitOnDemandUsed {
+		value := explicitOnDemandUsedCents
+		onDemandUsedCents = &value
+	} else if hasUsed && hasMonthlyLimit {
+		value := math.Max(0, usedCents-monthlyLimitCents)
+		onDemandUsedCents = &value
+	}
 	var usedPercent *float64
-	if hasMonthlyLimit && monthlyLimitCents > 0 && hasUsed {
-		value := (usedCents / monthlyLimitCents) * 100
+	if hasMonthlyLimit && monthlyLimitCents > 0 && includedUsedCents != nil {
+		value := (*includedUsedCents / monthlyLimitCents) * 100
 		usedPercent = &value
 	}
-	summary := map[string]any{
-		"monthlyLimitCents": nil,
-		"usedCents":         nil,
-		"onDemandCapCents":  nil,
-		"usedPercent":       floatPtrAny(usedPercent),
+	var onDemandUsedPercent *float64
+	if hasOnDemandCap && onDemandCapCents > 0 && onDemandUsedCents != nil {
+		value := (*onDemandUsedCents / onDemandCapCents) * 100
+		onDemandUsedPercent = &value
+	}
+	if hasWeeklyData {
+		if periodType == "unknown" {
+			summary["periodType"] = "weekly"
+		} else {
+			summary["periodType"] = periodType
+		}
+		if hasCreditUsagePercent {
+			summary["usagePercent"] = creditUsagePercent
+		}
+		if periodStart != "" {
+			summary["periodStart"] = periodStart
+		}
+		if periodEnd != "" {
+			summary["periodEnd"] = periodEnd
+		}
+	} else {
+		summary["periodType"] = "monthly"
+		summary["usagePercent"] = floatPtrAny(usedPercent)
+		if billingPeriodStart != "" {
+			summary["periodStart"] = billingPeriodStart
+		}
+		if billingPeriodEnd != "" {
+			summary["periodEnd"] = billingPeriodEnd
+		}
 	}
 	if hasMonthlyLimit {
 		summary["monthlyLimitCents"] = monthlyLimitCents
@@ -4141,16 +4288,28 @@ func buildXAIBillingSummary(body string) (map[string]any, *float64, error) {
 	if hasUsed {
 		summary["usedCents"] = usedCents
 	}
+	if includedUsedCents != nil {
+		summary["includedUsedCents"] = *includedUsedCents
+	}
 	if hasOnDemandCap {
 		summary["onDemandCapCents"] = onDemandCapCents
 	}
-	if billingPeriodStart != "" {
+	if onDemandUsedCents != nil {
+		summary["onDemandUsedCents"] = *onDemandUsedCents
+	}
+	if onDemandUsedPercent != nil {
+		summary["onDemandUsedPercent"] = *onDemandUsedPercent
+	}
+	if usedPercent != nil {
+		summary["usedPercent"] = *usedPercent
+	}
+	if hasMonthlyData && billingPeriodStart != "" {
 		summary["billingPeriodStart"] = billingPeriodStart
 	}
-	if billingPeriodEnd != "" {
+	if hasMonthlyData && billingPeriodEnd != "" {
 		summary["billingPeriodEnd"] = billingPeriodEnd
 	}
-	return summary, usedPercent, nil
+	return summary, xaiSummaryUsedPercent(summary), nil
 }
 
 func xaiCentValue(value any) (float64, bool) {
@@ -4158,6 +4317,112 @@ func xaiCentValue(value any) (float64, bool) {
 		return floatFromAny(mapped["val"])
 	}
 	return floatFromAny(value)
+}
+
+func xaiPeriodType(period map[string]any) string {
+	raw := strings.ToLower(stringFromAny(period["type"]))
+	switch {
+	case strings.Contains(raw, "weekly"):
+		return "weekly"
+	case strings.Contains(raw, "monthly"):
+		return "monthly"
+	default:
+		return "unknown"
+	}
+}
+
+func xaiProductUsage(value any) []map[string]any {
+	items := make([]map[string]any, 0)
+	for i, raw := range anySlice(value) {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		product := firstNonEmptyStringValue(stringFromAny(item["product"]), fmt.Sprintf("Product %d", i+1))
+		usagePercent, hasUsagePercent := floatFromAny(firstAny(item, "usagePercent", "usage_percent"))
+		row := map[string]any{"product": product, "usagePercent": nil}
+		if hasUsagePercent {
+			row["usagePercent"] = usagePercent
+		}
+		items = append(items, row)
+	}
+	return items
+}
+
+func mergeXAIBillingSummaries(primary map[string]any, fallback map[string]any) map[string]any {
+	if primary == nil {
+		return fallback
+	}
+	if fallback == nil {
+		return primary
+	}
+	merged := map[string]any{
+		"periodType":          firstKnownXaiPeriodType(primary["periodType"], fallback["periodType"]),
+		"usagePercent":        firstNonNilAny(primary["usagePercent"], fallback["usagePercent"]),
+		"productUsage":        firstNonEmptyXaiProductUsage(primary["productUsage"], fallback["productUsage"]),
+		"monthlyLimitCents":   firstNonNilAny(primary["monthlyLimitCents"], fallback["monthlyLimitCents"]),
+		"usedCents":           firstNonNilAny(primary["usedCents"], fallback["usedCents"]),
+		"includedUsedCents":   firstNonNilAny(primary["includedUsedCents"], fallback["includedUsedCents"]),
+		"onDemandCapCents":    firstNonNilAny(primary["onDemandCapCents"], fallback["onDemandCapCents"]),
+		"onDemandUsedCents":   firstNonNilAny(primary["onDemandUsedCents"], fallback["onDemandUsedCents"]),
+		"onDemandUsedPercent": firstNonNilAny(primary["onDemandUsedPercent"], fallback["onDemandUsedPercent"]),
+		"billingPeriodStart":  firstNonNilAny(primary["billingPeriodStart"], fallback["billingPeriodStart"]),
+		"billingPeriodEnd":    firstNonNilAny(primary["billingPeriodEnd"], fallback["billingPeriodEnd"]),
+		"usedPercent":         firstNonNilAny(primary["usedPercent"], fallback["usedPercent"]),
+	}
+	if value := firstNonNilAny(primary["periodStart"], fallback["periodStart"]); value != nil {
+		merged["periodStart"] = value
+	}
+	if value := firstNonNilAny(primary["periodEnd"], fallback["periodEnd"]); value != nil {
+		merged["periodEnd"] = value
+	}
+	return merged
+}
+
+func firstKnownXaiPeriodType(primary any, fallback any) any {
+	if value := stringFromAny(primary); value != "" && value != "unknown" {
+		return value
+	}
+	if value := stringFromAny(fallback); value != "" {
+		return value
+	}
+	return "unknown"
+}
+
+func firstNonNilAny(primary any, fallback any) any {
+	if primary != nil {
+		return primary
+	}
+	return fallback
+}
+
+func firstNonEmptyXaiProductUsage(primary any, fallback any) any {
+	if len(anySlice(primary)) > 0 {
+		return primary
+	}
+	if len(anySlice(fallback)) > 0 {
+		return fallback
+	}
+	return []map[string]any{}
+}
+
+func xaiSummaryUsedPercent(summary map[string]any) *float64 {
+	for _, key := range []string{"usagePercent", "usage_percent", "usedPercent", "used_percent", "onDemandUsedPercent", "on_demand_used_percent"} {
+		if value, ok := floatFromAny(summary[key]); ok {
+			return &value
+		}
+	}
+	values := make([]float64, 0)
+	for _, raw := range anySlice(firstAny(summary, "productUsage", "product_usage")) {
+		item, ok := raw.(map[string]any)
+		if !ok {
+			continue
+		}
+		if value, ok := floatFromAny(firstAny(item, "usagePercent", "usage_percent")); ok {
+			values = append(values, value)
+		}
+	}
+	return maxFloatPtr(values)
 }
 
 func kimiLimitLabel(item map[string]any, detail map[string]any, window map[string]any, index int) map[string]any {
@@ -4423,6 +4688,72 @@ func codexAccountIDFromMap(source map[string]any) string {
 	return idTokenClaim(source["id_token"], "chatgpt_account_id", "chatgptAccountId", "account_id", "accountId")
 }
 
+func xaiUserID(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	for _, source := range []map[string]any{auth.Metadata, stringMapToAnyMap(auth.Attributes)} {
+		if value := xaiUserIDFromMap(source); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
+func xaiUserIDFromMap(source map[string]any) string {
+	if source == nil {
+		return ""
+	}
+	for _, key := range []string{"x_user_id", "xUserId", "user_id", "userId", "subject", "sub", "id"} {
+		if value := stringFromAny(source[key]); value != "" {
+			return value
+		}
+	}
+	return idTokenStringClaim(source["id_token"], "sub", "id", "user_id", "userId")
+}
+
+func idTokenStringClaim(raw any, keys ...string) string {
+	if mapped, ok := raw.(map[string]any); ok {
+		for _, key := range keys {
+			if value := stringFromAny(mapped[key]); value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+	token := stringFromAny(raw)
+	if token == "" {
+		return ""
+	}
+	var parsed map[string]any
+	if err := json.Unmarshal([]byte(token), &parsed); err == nil {
+		for _, key := range keys {
+			if value := stringFromAny(parsed[key]); value != "" {
+				return value
+			}
+		}
+		return ""
+	}
+	parts := strings.Split(token, ".")
+	if len(parts) < 2 {
+		return ""
+	}
+	payload, err := base64.RawURLEncoding.DecodeString(parts[1])
+	if err != nil {
+		return ""
+	}
+	var data map[string]any
+	if err := json.Unmarshal(payload, &data); err != nil {
+		return ""
+	}
+	for _, key := range keys {
+		if value := stringFromAny(data[key]); value != "" {
+			return value
+		}
+	}
+	return ""
+}
+
 func stringMapToAnyMap(values map[string]string) map[string]any {
 	if len(values) == 0 {
 		return nil
@@ -4651,6 +4982,12 @@ func anySlice(value any) []any {
 	switch items := value.(type) {
 	case []any:
 		return items
+	case []map[string]any:
+		out := make([]any, 0, len(items))
+		for _, item := range items {
+			out = append(out, item)
+		}
+		return out
 	case []string:
 		out := make([]any, 0, len(items))
 		for _, item := range items {

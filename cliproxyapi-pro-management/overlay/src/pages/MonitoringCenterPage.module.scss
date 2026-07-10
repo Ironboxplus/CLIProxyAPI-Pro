@@ -3319,6 +3319,154 @@
   white-space: normal;
 }
 
+.realtimeStatusErrorButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.realtimeStatusErrorButton:hover {
+  transform: none;
+  filter: brightness(0.97);
+}
+
+.realtimeStatusErrorButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--monitor-red) 42%, var(--monitor-line));
+  outline-offset: 2px;
+  border-radius: 999px;
+}
+
+.realtimeStatusErrorButton .statusBadge {
+  width: 100%;
+}
+
+.realtimeErrorDetailsPanel {
+  display: grid;
+  gap: 14px;
+  padding: 2px 0 4px;
+}
+
+.monitorModalActions {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+  gap: 8px;
+}
+
+.realtimeErrorOverview {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--monitor-red) 24%, var(--monitor-line));
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--monitor-red) 7%, var(--monitor-surface));
+}
+
+.realtimeErrorOverviewTop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.realtimeErrorOverviewTop .statusBadge {
+  width: auto;
+}
+
+.realtimeErrorOverviewTop span {
+  color: var(--monitor-red);
+  font-size: 12px;
+  font-weight: 650;
+  line-height: 1.35;
+}
+
+.realtimeErrorOverview strong {
+  color: var(--monitor-ink);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.realtimeErrorMessageBlock {
+  display: grid;
+  gap: 6px;
+}
+
+.realtimeErrorMessageBlock > span {
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.realtimeErrorMessage {
+  max-height: 180px;
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 86%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--monitor-surface-muted) 58%, var(--monitor-surface));
+  color: var(--monitor-ink);
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+}
+
+.realtimeErrorDetailsGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  gap: 0;
+  border: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.realtimeErrorDetailItem {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 9px 12px;
+  background: var(--monitor-surface);
+}
+
+.realtimeErrorDetailItem + .realtimeErrorDetailItem {
+  border-top: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+}
+
+.realtimeErrorDetailItem span {
+  flex: 0 0 auto;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.realtimeErrorDetailItem strong {
+  min-width: 0;
+  max-width: 72%;
+  text-align: right;
+  overflow-wrap: anywhere;
+  color: var(--monitor-ink);
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
 .realtimeUsageCell {
   gap: 2px;
 }
@@ -3360,6 +3508,10 @@
   font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
 }
 
+.mutedText {
+  color: var(--monitor-muted);
+}
+
 .statusCell {
   display: grid;
   gap: 6px;
@@ -3376,6 +3528,7 @@
   min-height: 24px;
   padding: 0 8px;
   font-size: 12px;
+  width: 100%;
 }
 
 .realtimeTable .statusBadge::before {

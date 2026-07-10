@@ -687,7 +687,10 @@ const isAntigravityQuotaLow = (
 const isXaiQuotaLow = (quota: unknown, usedPercentThreshold: number) => {
   if (!isRecordValue(quota) || quota.status !== 'success') return false;
   if (!isRecordValue(quota.billing)) return false;
-  const used = normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent);
+  const used =
+    normalizeNumberValue(quota.billing.usagePercent ?? quota.billing.usage_percent)
+    ?? normalizeNumberValue(quota.billing.usedPercent ?? quota.billing.used_percent)
+    ?? maxAntigravityGroupUsedPercent(Array.isArray(quota.billing.productUsage) ? quota.billing.productUsage : []);
   return used !== null && used >= usedPercentThreshold;
 };
 
@@ -955,6 +958,14 @@ const summaryToneClass: Record<NonNullable<SummaryCard['tone']>, string> = {
 
 const INSPECTION_TARGET_OPTIONS = [
   { value: ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE, label: 'All' },
+  ...ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS.map((provider) => ({
+    value: provider,
+    label: resolveProviderDisplayLabel(provider),
+  })),
+] as const;
+
+const RESULT_PROVIDER_OPTIONS = [
+  { value: ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE, labelKey: 'monitoring.filter_all_providers' },
   ...ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS.map((provider) => ({
     value: provider,
     label: resolveProviderDisplayLabel(provider),
@@ -1577,6 +1588,7 @@ export function AccountInspectionPage() {
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [logsCollapsed, setLogsCollapsed] = useState(false);
   const [resultFilter, setResultFilter] = useState<ResultFilter>('accountInvalid');
+  const [selectedResultProvider, setSelectedResultProvider] = useState<string>(ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE);
   const [resultPage, setResultPage] = useState(1);
   const [logLevelFilter, setLogLevelFilter] = useState<AccountInspectionLogLevel | 'all'>('all');
   const [logPage, setLogPage] = useState(1);
@@ -1701,23 +1713,25 @@ export function AccountInspectionPage() {
       resultPage,
       resultPageSize: ACCOUNT_INSPECTION_RESULT_PAGE_SIZE,
       resultFilter,
+      resultProvider: selectedResultProvider,
       logPage,
       logPageSize: ACCOUNT_INSPECTION_LOG_PAGE_SIZE,
       logLevel: logLevelFilter,
     });
     applyBackendResponse(response, true);
     return response;
-  }, [applyBackendResponse, logLevelFilter, logPage, resultFilter, resultPage]);
+  }, [applyBackendResponse, logLevelFilter, logPage, resultFilter, resultPage, selectedResultProvider]);
 
   const currentInspectionDetailOptions = useMemo(() => ({
     includeDetails: true,
     resultPage,
     resultPageSize: ACCOUNT_INSPECTION_RESULT_PAGE_SIZE,
     resultFilter,
+    resultProvider: selectedResultProvider,
     logPage,
     logPageSize: ACCOUNT_INSPECTION_LOG_PAGE_SIZE,
     logLevel: logLevelFilter,
-  }), [logLevelFilter, logPage, resultFilter, resultPage]);
+  }), [logLevelFilter, logPage, resultFilter, resultPage, selectedResultProvider]);
 
   const loadBackendSchedule = useCallback(async () => {
     if (connectionStatus !== 'connected') return;
@@ -1784,6 +1798,7 @@ export function AccountInspectionPage() {
     const detailKey = [
       progress.startedAt,
       resultFilter,
+      selectedResultProvider,
       resultPage,
       logLevelFilter,
       logPage,
@@ -1829,11 +1844,12 @@ export function AccountInspectionPage() {
     progress.total,
     resultFilter,
     resultPage,
+    selectedResultProvider,
   ]);
 
   useEffect(() => {
     setResultPage(1);
-  }, [resultFilter]);
+  }, [resultFilter, selectedResultProvider]);
 
   useEffect(() => {
     setLogPage(1);
@@ -2077,6 +2093,7 @@ export function AccountInspectionPage() {
         const response = await accountInspectionApi.getStatus({
           includeDetails: true,
           resultFilter: 'pending',
+          resultProvider: selectedResultProvider,
           resultPage: page,
           resultPageSize: ACCOUNT_INSPECTION_ACTION_PAGE_SIZE,
           logPage: 1,
@@ -2103,7 +2120,7 @@ export function AccountInspectionPage() {
       })
       .catch((error) => handleAccountInspectionControlError(error, appendLog, showNotification, t('common.unknown_error')))
       .finally(() => setLoadingFullInspectionDetails(false));
-  }, [appendLog, executeItems, inspectionSettings, result, showConfirmation, showNotification, t]);
+  }, [appendLog, executeItems, inspectionSettings, result, selectedResultProvider, showConfirmation, showNotification, t]);
 
   const handleExecuteSingle = useCallback(
     (item: AccountInspectionResultItem, manualAction?: ManualAccountInspectionAction) => {
@@ -2377,6 +2394,13 @@ export function AccountInspectionPage() {
     { key: 'recoverable', label: t('monitoring.account_inspection_health_recoverable') },
     { key: 'highAvailable', label: t('monitoring.account_inspection_high_available') },
   ], [t]);
+  const resultProviderOptions = useMemo(
+    () => RESULT_PROVIDER_OPTIONS.map((option) => ({
+      value: option.value,
+      label: 'labelKey' in option ? t(option.labelKey) : option.label,
+    })),
+    [t]
+  );
   const logLevelOptions = useMemo<Array<{ key: AccountInspectionLogLevel | 'all'; label: string }>>(() => [
     { key: 'all', label: t('monitoring.account_inspection_filter_all') },
     { key: 'success', label: t('monitoring.account_inspection_log_success') },
@@ -2896,19 +2920,27 @@ export function AccountInspectionPage() {
             <p>{t('monitoring.account_inspection_results_desc')}</p>
           </div>
           {result ? (
-            <div className={styles.resultFilterControl}>
-              {resultFilterTabs.map((tab) => (
-                <button
-                  key={tab.key}
-                  type="button"
-                  className={[styles.resultFilterButton, resultFilter === tab.key ? styles.resultFilterButtonActive : '']
-                    .filter(Boolean)
-                    .join(' ')}
-                  onClick={() => setResultFilter(tab.key)}
-                >
-                  <span>{tab.label}</span>
-                </button>
-              ))}
+            <div className={styles.resultToolbar}>
+              <Select
+                value={selectedResultProvider}
+                options={resultProviderOptions}
+                onChange={setSelectedResultProvider}
+                ariaLabel={t('monitoring.account_inspection_filter_provider')}
+              />
+              <div className={styles.resultFilterControl}>
+                {resultFilterTabs.map((tab) => (
+                  <button
+                    key={tab.key}
+                    type="button"
+                    className={[styles.resultFilterButton, resultFilter === tab.key ? styles.resultFilterButtonActive : '']
+                      .filter(Boolean)
+                      .join(' ')}
+                    onClick={() => setResultFilter(tab.key)}
+                  >
+                    <span>{tab.label}</span>
+                  </button>
+                ))}
+              </div>
             </div>
           ) : null}
         </div>
