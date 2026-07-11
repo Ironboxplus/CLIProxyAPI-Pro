@@ -3,6 +3,7 @@ package embeddedusage
 import (
 	"bufio"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,8 +16,24 @@ import (
 )
 
 const accountInspectionScheduleExportRecordType = "account_inspection_schedule"
+const usageHistoryStartCursorValue = int64(1<<63 - 1)
 
 type usageStreamEvent = internalusage.Payload
+
+type usageHistoryCursor struct {
+	SnapshotMaxID   int64  `json:"snapshot_max_id"`
+	MatchedTotal    int64  `json:"matched_total"`
+	BeforeTimestamp int64  `json:"before_timestamp_ms"`
+	BeforeID        int64  `json:"before_id"`
+	FromMS          int64  `json:"from_ms,omitempty"`
+	ToMS            int64  `json:"to_ms,omitempty"`
+	Provider        string `json:"provider,omitempty"`
+	Model           string `json:"model,omitempty"`
+	AuthIndex       string `json:"auth_index,omitempty"`
+	APIKeyHash      string `json:"api_key_hash,omitempty"`
+	Status          string `json:"status,omitempty"`
+	Search          string `json:"search,omitempty"`
+}
 
 type accountInspectionScheduleExportRecord struct {
 	RecordType string          `json:"record_type"`
@@ -125,6 +142,18 @@ func parseQueryInt(c *gin.Context, key string, fallback int) int {
 	return parsed
 }
 
+func parseQueryIntSigned(c *gin.Context, key string, fallback int) int {
+	value := strings.TrimSpace(c.Query(key))
+	if value == "" {
+		return fallback
+	}
+	parsed, err := strconv.Atoi(value)
+	if err != nil {
+		return fallback
+	}
+	return parsed
+}
+
 func usageEventPageLimit(requestedLimit int) int {
 	if requestedLimit <= 0 || requestedLimit > usageEventsPageLimit {
 		return usageEventsPageLimit
@@ -150,6 +179,160 @@ func usagePayloadWithDetailLimit(events []internalusage.Event, limit int, detail
 	payload.DetailsLimit = int64(limit)
 	payload.DetailsLimited = detailsLimited
 	return payload
+}
+
+func encodeUsageHistoryCursor(cursor usageHistoryCursor) string {
+	payload, err := json.Marshal(cursor)
+	if err != nil {
+		return ""
+	}
+	return base64.RawURLEncoding.EncodeToString(payload)
+}
+
+func decodeUsageHistoryCursor(value string) (usageHistoryCursor, error) {
+	decoded, err := base64.RawURLEncoding.DecodeString(strings.TrimSpace(value))
+	if err != nil {
+		return usageHistoryCursor{}, fmt.Errorf("invalid usage cursor")
+	}
+	var cursor usageHistoryCursor
+	if err := json.Unmarshal(decoded, &cursor); err != nil {
+		return usageHistoryCursor{}, fmt.Errorf("invalid usage cursor")
+	}
+	if cursor.SnapshotMaxID <= 0 || cursor.BeforeTimestamp <= 0 || cursor.BeforeID <= 0 {
+		return usageHistoryCursor{}, fmt.Errorf("invalid usage cursor")
+	}
+	return cursor, nil
+}
+
+func usageStatusFilter(value string) (*bool, string) {
+	switch strings.ToLower(strings.TrimSpace(value)) {
+	case "failed", "failure":
+		failed := true
+		return &failed, "failed"
+	case "success", "succeeded":
+		failed := false
+		return &failed, "success"
+	default:
+		return nil, ""
+	}
+}
+
+func usageEventQueryOptionsFromCursor(cursor usageHistoryCursor, limit int) UsageEventQueryOptions {
+	failed, _ := usageStatusFilter(cursor.Status)
+	return UsageEventQueryOptions{
+		SnapshotMaxID:   cursor.SnapshotMaxID,
+		BeforeTimestamp: cursor.BeforeTimestamp,
+		BeforeID:        cursor.BeforeID,
+		FromMS:          cursor.FromMS,
+		ToMS:            cursor.ToMS,
+		Provider:        cursor.Provider,
+		Model:           cursor.Model,
+		AuthIndex:       cursor.AuthIndex,
+		APIKeyHash:      cursor.APIKeyHash,
+		Failed:          failed,
+		Search:          cursor.Search,
+		Limit:           limit,
+		MatchedTotal:    cursor.MatchedTotal,
+		SkipCount:       true,
+	}
+}
+
+func usageHistoryCursorFromOptions(options UsageEventQueryOptions, status string, matchedTotal int64, event internalusage.Event) usageHistoryCursor {
+	return usageHistoryCursor{
+		SnapshotMaxID:   options.SnapshotMaxID,
+		MatchedTotal:    matchedTotal,
+		BeforeTimestamp: event.TimestampMS,
+		BeforeID:        event.ID,
+		FromMS:          options.FromMS,
+		ToMS:            options.ToMS,
+		Provider:        options.Provider,
+		Model:           options.Model,
+		AuthIndex:       options.AuthIndex,
+		APIKeyHash:      options.APIKeyHash,
+		Status:          status,
+		Search:          options.Search,
+	}
+}
+
+func (s *Server) handleUsageHistoryEvents(c *gin.Context) {
+	limit := usageEventPageLimit(parseQueryInt(c, "limit", 100))
+	cursorValue := strings.TrimSpace(c.Query("cursor"))
+	status := ""
+	var options UsageEventQueryOptions
+	if cursorValue != "" {
+		cursor, err := decodeUsageHistoryCursor(cursorValue)
+		if err != nil {
+			c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+			return
+		}
+		options = usageEventQueryOptionsFromCursor(cursor, limit)
+		status = cursor.Status
+		page, err := s.store.QueryEvents(c.Request.Context(), options)
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		payload := internalusage.BuildPayload(page.Events)
+		payload.DetailsLimit = int64(limit)
+		payload.DetailsLimited = page.HasMore
+		payload.MatchedTotal = page.MatchedTotal
+		payload.SnapshotMaxID = options.SnapshotMaxID
+		payload.PageCursor = cursorValue
+		payload.HasMore = page.HasMore
+		if page.HasMore && len(page.Events) > 0 {
+			payload.NextCursor = encodeUsageHistoryCursor(usageHistoryCursorFromOptions(options, status, page.MatchedTotal, page.Events[len(page.Events)-1]))
+		}
+		c.JSON(http.StatusOK, payload)
+		return
+	} else {
+		latestID, _, err := s.store.LatestCursor(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		if latestID <= 0 {
+			payload := internalusage.BuildPayload(nil)
+			payload.DetailsLimit = int64(limit)
+			c.JSON(http.StatusOK, payload)
+			return
+		}
+		failed, normalizedStatus := usageStatusFilter(c.Query("status"))
+		status = normalizedStatus
+		options = UsageEventQueryOptions{
+			SnapshotMaxID: latestID,
+			FromMS:        parseQueryInt64(c, "from_ms", 0),
+			ToMS:          parseQueryInt64(c, "to_ms", 0),
+			Provider:      strings.TrimSpace(c.Query("provider")),
+			Model:         strings.TrimSpace(c.Query("model")),
+			AuthIndex:     strings.TrimSpace(c.Query("auth_index")),
+			APIKeyHash:    strings.TrimSpace(c.Query("api_key_hash")),
+			Failed:        failed,
+			Search:        strings.TrimSpace(c.Query("search")),
+			Limit:         limit,
+		}
+	}
+
+	page, err := s.store.QueryEvents(c.Request.Context(), options)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	payload := internalusage.BuildPayload(page.Events)
+	payload.DetailsLimit = int64(limit)
+	payload.DetailsLimited = page.HasMore
+	payload.MatchedTotal = page.MatchedTotal
+	payload.SnapshotMaxID = options.SnapshotMaxID
+	payload.PageCursor = encodeUsageHistoryCursor(usageHistoryCursorFromOptions(
+		options,
+		status,
+		page.MatchedTotal,
+		internalusage.Event{TimestampMS: usageHistoryStartCursorValue, ID: usageHistoryStartCursorValue},
+	))
+	payload.HasMore = page.HasMore
+	if page.HasMore && len(page.Events) > 0 {
+		payload.NextCursor = encodeUsageHistoryCursor(usageHistoryCursorFromOptions(options, status, page.MatchedTotal, page.Events[len(page.Events)-1]))
+	}
+	c.JSON(http.StatusOK, payload)
 }
 
 func (s *Server) handleUsage(c *gin.Context) {
@@ -191,6 +374,10 @@ func (s *Server) handleUsage(c *gin.Context) {
 }
 
 func (s *Server) handleUsageEvents(c *gin.Context) {
+	if strings.TrimSpace(c.Query("cursor")) != "" || strings.EqualFold(strings.TrimSpace(c.Query("direction")), "before") {
+		s.handleUsageHistoryEvents(c)
+		return
+	}
 	afterID := parseQueryInt64(c, "after_id", 0)
 	events, limit, detailsLimited, err := s.loadUsageEventPage(c.Request.Context(), afterID, parseQueryInt(c, "limit", s.cfg.BatchSize))
 	if err != nil {
@@ -201,19 +388,30 @@ func (s *Server) handleUsageEvents(c *gin.Context) {
 }
 
 func (s *Server) handleUsageAggregates(c *gin.Context) {
+	latestID, _, err := s.store.LatestCursor(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	options := UsageAggregateOptions{
-		FromMS:   parseQueryInt64(c, "from_ms", 0),
-		ToMS:     parseQueryInt64(c, "to_ms", 0),
-		Interval: strings.TrimSpace(c.Query("interval")),
-		GroupBy:  parseCSVQuery(c.Query("group_by")),
-		Limit:    parseQueryInt(c, "limit", 1000),
+		FromMS:                parseQueryInt64(c, "from_ms", 0),
+		ToMS:                  parseQueryInt64(c, "to_ms", 0),
+		Interval:              strings.TrimSpace(c.Query("interval")),
+		GroupBy:               parseCSVQuery(c.Query("group_by")),
+		Limit:                 parseQueryInt(c, "limit", 1000),
+		APIKeyHash:            strings.TrimSpace(c.Query("api_key_hash")),
+		TimezoneOffsetMinutes: parseQueryIntSigned(c, "timezone_offset_minutes", 0),
 	}
 	buckets, err := s.store.UsageAggregates(c.Request.Context(), options)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, gin.H{"items": buckets})
+	c.JSON(http.StatusOK, gin.H{
+		"items":          buckets,
+		"latest_id":      latestID,
+		"snapshot_at_ms": time.Now().UnixMilli(),
+	})
 }
 
 func (s *Server) handleUsageStream(c *gin.Context) {
@@ -235,8 +433,8 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 	c.Header("Connection", "keep-alive")
 	c.Header("X-Accel-Buffering", "no")
 
-	ticker := time.NewTicker(time.Second)
-	defer ticker.Stop()
+	keepaliveTicker := time.NewTicker(15 * time.Second)
+	defer keepaliveTicker.Stop()
 
 	writeEvent := func(name string, payload usageStreamEvent) bool {
 		data, err := json.Marshal(payload)
@@ -263,26 +461,30 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 	}
 
 	for {
-		select {
-		case <-c.Request.Context().Done():
+		eventSignal := s.store.EventSignal()
+		events, limit, detailsLimited, err := s.loadUsageEventPage(c.Request.Context(), lastID, s.cfg.BatchSize)
+		if err != nil {
 			return
-		case <-ticker.C:
-			events, limit, detailsLimited, err := s.loadUsageEventPage(c.Request.Context(), lastID, s.cfg.BatchSize)
-			if err != nil {
-				return
-			}
-			if len(events) == 0 {
-				if _, err := fmt.Fprint(c.Writer, ": keepalive\n\n"); err != nil {
-					return
-				}
-				flusher.Flush()
-				continue
-			}
+		}
+		if len(events) > 0 {
 			payload := usagePayloadWithDetailLimit(events, limit, detailsLimited)
 			lastID = payload.LatestID
 			if !writeEvent("usage", payload) {
 				return
 			}
+			continue
+		}
+		select {
+		case <-c.Request.Context().Done():
+			return
+		case <-keepaliveTicker.C:
+			if _, err := fmt.Fprint(c.Writer, ": keepalive\n\n"); err != nil {
+				return
+			}
+			flusher.Flush()
+			continue
+		case <-eventSignal:
+			continue
 		}
 	}
 }

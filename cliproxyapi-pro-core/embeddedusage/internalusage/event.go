@@ -59,6 +59,8 @@ type Tokens struct {
 }
 
 type Detail struct {
+	ID                int64  `json:"id,omitempty"`
+	RequestID         string `json:"request_id,omitempty"`
 	Timestamp         string `json:"timestamp"`
 	Source            string `json:"source"`
 	AuthIndex         string `json:"auth_index,omitempty"`
@@ -97,6 +99,11 @@ type Payload struct {
 	DetailsCount   int64                    `json:"details_count,omitempty"`
 	DetailsLimit   int64                    `json:"details_limit,omitempty"`
 	DetailsLimited bool                     `json:"details_limited,omitempty"`
+	MatchedTotal   int64                    `json:"matched_total,omitempty"`
+	SnapshotMaxID  int64                    `json:"snapshot_max_id,omitempty"`
+	PageCursor     string                   `json:"page_cursor,omitempty"`
+	NextCursor     string                   `json:"next_cursor,omitempty"`
+	HasMore        bool                     `json:"has_more,omitempty"`
 	APIs           map[string]*APIAggregate `json:"apis"`
 }
 
@@ -174,6 +181,16 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	source := maskSource(sourceRaw)
 	apiKey := readString(record, "api_key")
 	authIndex := readString(record, "auth_index")
+	sourceHash := hashString(sourceRaw)
+	apiKeyHash := hashString(apiKey)
+	if exported {
+		if value := readString(record, "source_hash"); value != "" {
+			sourceHash = value
+		}
+		if value := readString(record, "api_key_hash"); value != "" {
+			apiKeyHash = value
+		}
+	}
 
 	event := Event{
 		RequestID:         readString(record, "request_id"),
@@ -189,8 +206,8 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		AuthType:          readString(record, "auth_type"),
 		AuthIndex:         authIndex,
 		Source:            source,
-		SourceHash:        hashString(sourceRaw),
-		APIKeyHash:        hashString(apiKey),
+		SourceHash:        sourceHash,
+		APIKeyHash:        apiKeyHash,
 		InputTokens:       inputTokens,
 		OutputTokens:      outputTokens,
 		ReasoningTokens:   reasoningTokens,
@@ -213,7 +230,10 @@ func NormalizeRaw(raw []byte) (Event, error) {
 	if event.Model == "" {
 		event.Model = "-"
 	}
-	event.EventHash = buildEventHash(event)
+	event.EventHash = readString(record, "event_hash")
+	if event.EventHash == "" {
+		event.EventHash = buildEventHash(event)
+	}
 	return event, nil
 }
 
@@ -250,6 +270,8 @@ func BuildPayload(events []Event) Payload {
 			apiEntry.Models[model] = modelEntry
 		}
 		modelEntry.Details = append(modelEntry.Details, Detail{
+			ID:                event.ID,
+			RequestID:         event.RequestID,
 			Timestamp:         event.Timestamp,
 			Source:            event.Source,
 			AuthIndex:         event.AuthIndex,

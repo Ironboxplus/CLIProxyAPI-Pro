@@ -73,6 +73,34 @@ func TestNormalizeRawIgnoresLegacyAliases(t *testing.T) {
 	}
 }
 
+func TestNormalizeRawPreservesExportedHashes(t *testing.T) {
+	event, err := NormalizeRaw([]byte(`{
+		"event_hash":"event-hash-exported",
+		"timestamp_ms":1781308800000,
+		"timestamp":"2026-06-13T00:00:00Z",
+		"model":"gpt-test",
+		"source":"m:abcd...wxyz",
+		"source_hash":"source-hash-exported",
+		"api_key_hash":"api-key-hash-exported",
+		"input_tokens":10,
+		"output_tokens":20,
+		"total_tokens":30,
+		"failed":false
+	}`))
+	if err != nil {
+		t.Fatalf("NormalizeRaw() error = %v", err)
+	}
+	if event.EventHash != "event-hash-exported" {
+		t.Fatalf("event hash = %q, want exported hash", event.EventHash)
+	}
+	if event.SourceHash != "source-hash-exported" {
+		t.Fatalf("source hash = %q, want exported hash", event.SourceHash)
+	}
+	if event.APIKeyHash != "api-key-hash-exported" {
+		t.Fatalf("api key hash = %q, want exported hash", event.APIKeyHash)
+	}
+}
+
 func TestBuildPayloadIncludesUpstreamUsageMetadata(t *testing.T) {
 	payload := BuildPayload([]Event{{
 		Timestamp:         "2026-06-13T00:00:00Z",

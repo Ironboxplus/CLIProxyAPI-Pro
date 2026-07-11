@@ -78,6 +78,26 @@ func insertTestUsageEvents(t *testing.T, store *Store, events ...internalusage.E
 	}
 }
 
+func TestInsertEventsNotifiesSubscribers(t *testing.T) {
+	store := openTestStore(t)
+	signal := store.EventSignal()
+
+	insertTestUsageEvents(t, store, testUsageEvent(0, false, 10))
+
+	select {
+	case <-signal:
+	case <-time.After(time.Second):
+		t.Fatal("event signal was not closed after inserting usage events")
+	}
+
+	nextSignal := store.EventSignal()
+	select {
+	case <-nextSignal:
+		t.Fatal("replacement event signal must remain open until the next insert")
+	default:
+	}
+}
+
 func TestUsageSummaryRespectsCursorLimit(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
@@ -374,6 +394,84 @@ func TestUsageDiagnosticsRoundTripAndAggregates(t *testing.T) {
 	}
 	if bucket.AvgLatencyMS == nil || *bucket.AvgLatencyMS != 100 || bucket.AvgTTFTMS == nil || *bucket.AvgTTFTMS != 20 {
 		t.Fatalf("aggregate latency = %+v/%+v, want 100/20", bucket.AvgLatencyMS, bucket.AvgTTFTMS)
+	}
+}
+
+func TestUsageAggregatesSupportsAllIntervalAndAPIKeyFilter(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	first := testUsageEvent(0, false, 10)
+	first.APIKeyHash = "key-a"
+	second := testUsageEvent(1, true, 20)
+	second.APIKeyHash = "key-b"
+	insertTestUsageEvents(t, store, first, second)
+
+	buckets, err := store.UsageAggregates(ctx, UsageAggregateOptions{
+		FromMS:     first.TimestampMS - 1,
+		Interval:   "all",
+		GroupBy:    []string{"model"},
+		APIKeyHash: "key-a",
+		Limit:      10,
+	})
+	if err != nil {
+		t.Fatalf("UsageAggregates() error = %v", err)
+	}
+	if len(buckets) != 1 || buckets[0].TotalRequests != 1 || buckets[0].TotalTokens != 10 {
+		t.Fatalf("all interval buckets = %+v, want one filtered request", buckets)
+	}
+}
+
+func TestUsageAggregatesIncludesUnattributedAPIKeyBucket(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	attributed := testUsageEvent(0, false, 10)
+	attributed.APIKeyHash = "key-a"
+	unattributed := testUsageEvent(1, false, 20)
+	insertTestUsageEvents(t, store, attributed, unattributed)
+
+	buckets, err := store.UsageAggregates(ctx, UsageAggregateOptions{
+		Interval: "all",
+		GroupBy:  []string{"api_key_hash"},
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("UsageAggregates() error = %v", err)
+	}
+	if len(buckets) != 2 {
+		t.Fatalf("UsageAggregates() len = %d, want attributed and unattributed buckets", len(buckets))
+	}
+	requestsByHash := make(map[string]int64, len(buckets))
+	for _, bucket := range buckets {
+		requestsByHash[bucket.APIKeyHash] += bucket.TotalRequests
+	}
+	if requestsByHash["key-a"] != 1 || requestsByHash[""] != 1 {
+		t.Fatalf("requests by API key hash = %#v, want one attributed and one unattributed request", requestsByHash)
+	}
+}
+
+func TestUsageAggregatesSupportsAuthIndexGroupingAndLastSeen(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	first := testUsageEvent(0, false, 10)
+	first.AuthIndex = "auth-a"
+	second := testUsageEvent(1, true, 20)
+	second.AuthIndex = "auth-a"
+	insertTestUsageEvents(t, store, first, second)
+
+	buckets, err := store.UsageAggregates(ctx, UsageAggregateOptions{
+		Interval: "all",
+		GroupBy:  []string{"auth_index", "provider", "model"},
+		Limit:    10,
+	})
+	if err != nil {
+		t.Fatalf("UsageAggregates() error = %v", err)
+	}
+	if len(buckets) != 1 {
+		t.Fatalf("UsageAggregates() len = %d, want 1", len(buckets))
+	}
+	bucket := buckets[0]
+	if bucket.AuthIndex != "auth-a" || bucket.TotalRequests != 2 || bucket.LastSeenAtMS != second.TimestampMS {
+		t.Fatalf("aggregate bucket = %+v, want auth-a total=2 last_seen=%d", bucket, second.TimestampMS)
 	}
 }
 

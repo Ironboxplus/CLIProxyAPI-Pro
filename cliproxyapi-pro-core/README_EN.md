@@ -54,6 +54,10 @@ The embedded service exposes these management routes:
 - `GET /v0/management/usage/settings` — read monitoring retention and WebDAV backup settings.
 - `PUT /v0/management/usage/settings` — write monitoring retention and WebDAV backup settings.
 
+Details returned by `/usage/events` and `/usage/stream` include a stable event `id`, which the management UI uses for incremental deduplication and cursor catch-up. SSE connections are awakened by an in-process notification after SQLite commits, with only a low-frequency keepalive instead of one database poll per connection per second.
+
+`/usage/aggregates` supports `from_ms`, `to_ms`, `interval=minute|hour|day|all`, `group_by=provider,model,endpoint,api_key_hash`, `api_key_hash`, and `timezone_offset_minutes`. Responses also include `latest_id` and `snapshot_at_ms` for freshness tracking.
+
 ### JSONL usage backup and restore
 
 `/usage/export` returns `application/x-ndjson`, one JSON object per line.

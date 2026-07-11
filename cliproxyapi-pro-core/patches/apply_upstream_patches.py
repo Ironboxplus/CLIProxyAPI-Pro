@@ -1978,8 +1978,317 @@ func (m *Manager) refreshForInspection(ctx context.Context, id string, force boo
 	if err != nil {
 		return updated, false, err
 	}
+	m.notifyAuthRefreshed(ctx, auth, saved)
 	return saved, true, nil
 }
+''')
+
+# A Codex refresh can carry a new id_token with a different plan. The normal
+# auth Update path persists that metadata but, by itself, does not rebuild the
+# model registry entry selected from the old plan_type.
+auth_conductor = ROOT / 'sdk' / 'cliproxy' / 'auth' / 'conductor.go'
+insert_before(
+    auth_conductor,
+    '// Manager orchestrates auth lifecycle, selection, execution, and persistence.\n',
+    '''// AuthRefreshHook observes successful refreshes after their auth state is saved.
+//
+// The hook runs outside the manager lock so callers may safely update dependent
+// runtime state, such as provider model registrations.
+type AuthRefreshHook func(ctx context.Context, before, after *Auth)
+
+''',
+    'type AuthRefreshHook func(ctx context.Context, before, after *Auth)',
+)
+replace_once(
+    auth_conductor,
+    '\thook          Hook\n',
+    '\thook            Hook\n\tauthRefreshHook AuthRefreshHook\n',
+)
+insert_before(
+    auth_conductor,
+    '// RegisterExecutor registers a provider executor with the manager.\n',
+    '''// SetAuthRefreshHook configures the callback invoked after a successful refresh is saved.
+func (m *Manager) SetAuthRefreshHook(hook AuthRefreshHook) {
+	if m == nil {
+		return
+	}
+	m.mu.Lock()
+	m.authRefreshHook = hook
+	m.mu.Unlock()
+}
+
+func (m *Manager) notifyAuthRefreshed(ctx context.Context, before, after *Auth) {
+	if m == nil || before == nil || after == nil {
+		return
+	}
+	m.mu.RLock()
+	hook := m.authRefreshHook
+	m.mu.RUnlock()
+	if hook == nil {
+		return
+	}
+	hook(ctx, before.Clone(), after.Clone())
+}
+
+''',
+    'func (m *Manager) SetAuthRefreshHook(hook AuthRefreshHook)',
+)
+replace_once(
+    auth_conductor,
+    '''	if saved != nil {
+		return saved, nil
+	}
+	return updated.Clone(), nil
+}
+
+func (m *Manager) executorFor(provider string) ProviderExecutor {''',
+    '''	if saved != nil {
+		m.notifyAuthRefreshed(ctx, auth, saved)
+		return saved, nil
+	}
+	return updated.Clone(), nil
+}
+
+func (m *Manager) executorFor(provider string) ProviderExecutor {''',
+)
+codex_executor = ROOT / 'internal' / 'runtime' / 'executor' / 'codex_executor.go'
+replace_once(
+    codex_executor,
+    '''	auth.Metadata["id_token"] = td.IDToken
+	auth.Metadata["access_token"] = td.AccessToken
+''',
+    '''	auth.Metadata["id_token"] = td.IDToken
+	updateCodexAuthPlanType(auth, td.IDToken)
+	auth.Metadata["access_token"] = td.AccessToken
+''',
+)
+insert_before(
+    codex_executor,
+    'type codexIdentityConfuseState struct {\n',
+    '''func updateCodexAuthPlanType(auth *cliproxyauth.Auth, idToken string) {
+	if auth == nil {
+		return
+	}
+	claims, err := codexauth.ParseJWTToken(strings.TrimSpace(idToken))
+	if err != nil || claims == nil {
+		return
+	}
+	planType := strings.TrimSpace(claims.CodexAuthInfo.ChatgptPlanType)
+	if planType == "" {
+		return
+	}
+	if auth.Attributes == nil {
+		auth.Attributes = make(map[string]string)
+	}
+	auth.Attributes["plan_type"] = planType
+}
+
+''',
+    'func updateCodexAuthPlanType(auth *cliproxyauth.Auth, idToken string)',
+)
+
+builder = ROOT / 'sdk' / 'cliproxy' / 'builder.go'
+replace_once(
+    builder,
+    '''	service := &Service{
+		cfg:            b.cfg,
+		configPath:     b.configPath,
+		tokenProvider:  tokenProvider,
+		apiKeyProvider: apiKeyProvider,
+		watcherFactory: watcherFactory,
+		hooks:          b.hooks,
+		authManager:    authManager,
+		accessManager:  accessManager,
+		coreManager:    coreManager,
+		pluginHost:     pluginHost,
+		serverOptions:  append([]api.ServerOption(nil), b.serverOptions...),
+	}
+	if b.postAuthHook != nil {''',
+    '''	service := &Service{
+		cfg:            b.cfg,
+		configPath:     b.configPath,
+		tokenProvider:  tokenProvider,
+		apiKeyProvider: apiKeyProvider,
+		watcherFactory: watcherFactory,
+		hooks:          b.hooks,
+		authManager:    authManager,
+		accessManager:  accessManager,
+		coreManager:    coreManager,
+		pluginHost:     pluginHost,
+		serverOptions:  append([]api.ServerOption(nil), b.serverOptions...),
+	}
+	coreManager.SetAuthRefreshHook(service.runtimeAuthRefreshHook())
+	if b.postAuthHook != nil {''',
+)
+insert_before(
+    builder,
+    'func (s *Service) runtimeAuthSyncHook() coreauth.PostAuthHook {\n',
+    '''func (s *Service) runtimeAuthRefreshHook() coreauth.AuthRefreshHook {
+	return func(ctx context.Context, before, after *coreauth.Auth) {
+		if s == nil || after == nil || after.ID == "" || !codexPlanTypeChanged(before, after) {
+			return
+		}
+		s.emitAuthUpdate(coreauth.WithSkipPersist(ctx), watcher.AuthUpdate{
+			Action: watcher.AuthUpdateActionModify,
+			ID:     after.ID,
+			Auth:   after,
+		})
+	}
+}
+
+func codexPlanTypeChanged(before, after *coreauth.Auth) bool {
+	if after == nil || !strings.EqualFold(strings.TrimSpace(after.Provider), "codex") {
+		return false
+	}
+	previousPlan := codexPlanType(before)
+	refreshedPlan := codexPlanType(after)
+	return refreshedPlan != "" && !strings.EqualFold(previousPlan, refreshedPlan)
+}
+
+func codexPlanType(auth *coreauth.Auth) string {
+	if auth == nil || auth.Attributes == nil {
+		return ""
+	}
+	return strings.TrimSpace(auth.Attributes["plan_type"])
+}
+
+''',
+    'func (s *Service) runtimeAuthRefreshHook() coreauth.AuthRefreshHook',
+)
+
+write_text(ROOT / 'internal' / 'runtime' / 'executor' / 'codex_executor_plan_refresh_test.go', f'''package executor
+
+import (
+	"encoding/base64"
+	"testing"
+
+	cliproxyauth "{import_path('sdk/cliproxy/auth')}"
+)
+
+func TestUpdateCodexAuthPlanTypeFromRefreshedIDToken(t *testing.T) {{
+	payload := []byte(`{{"https://api.openai.com/auth":{{"chatgpt_plan_type":"pro"}}}}`)
+	token := "e30." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+	auth := &cliproxyauth.Auth{{Attributes: map[string]string{{"plan_type": "free"}}}}
+
+	updateCodexAuthPlanType(auth, token)
+
+	if got := auth.Attributes["plan_type"]; got != "pro" {{
+		t.Fatalf("plan_type = %q, want pro", got)
+	}}
+}}
+''')
+
+write_text(ROOT / 'sdk' / 'cliproxy' / 'auth' / 'conductor_refresh_hook_test.go', f'''package auth
+
+import (
+	"context"
+	"net/http"
+	"testing"
+
+	cliproxyexecutor "{import_path('sdk/cliproxy/executor')}"
+)
+
+type planRefreshHookExecutor struct{{}}
+
+func (planRefreshHookExecutor) Identifier() string {{ return "codex" }}
+
+func (planRefreshHookExecutor) Execute(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {{
+	return cliproxyexecutor.Response{{}}, nil
+}}
+
+func (planRefreshHookExecutor) ExecuteStream(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (*cliproxyexecutor.StreamResult, error) {{
+	return nil, nil
+}}
+
+func (planRefreshHookExecutor) Refresh(_ context.Context, auth *Auth) (*Auth, error) {{
+	if auth.Attributes == nil {{
+		auth.Attributes = make(map[string]string)
+	}}
+	auth.Attributes["plan_type"] = "pro"
+	if auth.Metadata == nil {{
+		auth.Metadata = make(map[string]any)
+	}}
+	auth.Metadata["access_token"] = "new-token"
+	return auth, nil
+}}
+
+func (planRefreshHookExecutor) CountTokens(context.Context, *Auth, cliproxyexecutor.Request, cliproxyexecutor.Options) (cliproxyexecutor.Response, error) {{
+	return cliproxyexecutor.Response{{}}, nil
+}}
+
+func (planRefreshHookExecutor) HttpRequest(context.Context, *Auth, *http.Request) (*http.Response, error) {{
+	return nil, nil
+}}
+
+func TestRefreshAuthForRequestNotifiesPlanChange(t *testing.T) {{
+	manager := NewManager(nil, &RoundRobinSelector{{}}, nil)
+	manager.RegisterExecutor(planRefreshHookExecutor{{}})
+	auth := &Auth{{
+		ID:         "codex-plan-refresh",
+		Provider:   "codex",
+		Attributes: map[string]string{{"plan_type": "free"}},
+		Metadata:   map[string]any{{"access_token": "old-token"}},
+	}}
+	if _, err := manager.Register(context.Background(), auth); err != nil {{
+		t.Fatalf("register auth: %v", err)
+	}}
+
+	var before, after *Auth
+	manager.SetAuthRefreshHook(func(_ context.Context, previous, refreshed *Auth) {{
+		before = previous
+		after = refreshed
+	}})
+
+	if _, err := manager.refreshAuthForRequest(context.Background(), auth.ID, "old-token"); err != nil {{
+		t.Fatalf("refresh auth: %v", err)
+	}}
+	if before == nil || after == nil {{
+		t.Fatal("refresh hook was not called")
+	}}
+	if got := before.Attributes["plan_type"]; got != "free" {{
+		t.Fatalf("previous plan_type = %q, want free", got)
+	}}
+	if got := after.Attributes["plan_type"]; got != "pro" {{
+		t.Fatalf("refreshed plan_type = %q, want pro", got)
+	}}
+}}
+''')
+
+write_text(ROOT / 'sdk' / 'cliproxy' / 'builder_codex_plan_refresh_test.go', f'''package cliproxy
+
+import (
+	"context"
+	"testing"
+
+	coreauth "{import_path('sdk/cliproxy/auth')}"
+	"{import_path('sdk/config')}"
+)
+
+func TestRuntimeAuthRefreshHookReRegistersCodexPlanModels(t *testing.T) {{
+	const authID = "codex-plan-refresh-models"
+	ctx := context.Background()
+	manager := coreauth.NewManager(nil, &coreauth.RoundRobinSelector{{}}, nil)
+	service := &Service{{cfg: &config.Config{{}}, coreManager: manager}}
+	registry := GlobalModelRegistry()
+	defer registry.UnregisterClient(authID)
+
+	service.applyCoreAuthAddOrUpdate(ctx, &coreauth.Auth{{
+		ID:         authID,
+		Provider:   "codex",
+		Attributes: map[string]string{{"plan_type": "free"}},
+	}})
+	if registry.ClientSupportsModel(authID, "gpt-5.6-sol") {{
+		t.Fatal("free Codex auth unexpectedly exposes gpt-5.6-sol")
+	}}
+
+	service.runtimeAuthRefreshHook()(ctx,
+		&coreauth.Auth{{ID: authID, Provider: "codex", Attributes: map[string]string{{"plan_type": "free"}}}},
+		&coreauth.Auth{{ID: authID, Provider: "codex", Attributes: map[string]string{{"plan_type": "pro"}}}},
+	)
+	if !registry.ClientSupportsModel(authID, "gpt-5.6-sol") {{
+		t.Fatal("refreshed Pro Codex auth did not expose gpt-5.6-sol")
+	}}
+}}
 ''')
 
 flush_writes()
@@ -1997,5 +2306,11 @@ subprocess.run([
     'internal/redisqueue/plugin_test.go',
     'internal/requestmeta/requestid.go',
     'internal/requestmeta/response.go',
+    'internal/runtime/executor/codex_executor.go',
+    'internal/runtime/executor/codex_executor_plan_refresh_test.go',
+    'sdk/cliproxy/auth/conductor.go',
+    'sdk/cliproxy/auth/conductor_refresh_hook_test.go',
+    'sdk/cliproxy/builder.go',
+    'sdk/cliproxy/builder_codex_plan_refresh_test.go',
 ], cwd=ROOT, check=True)
 subprocess.run(['go', 'mod', 'tidy'], cwd=ROOT, check=True)

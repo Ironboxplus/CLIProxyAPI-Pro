@@ -118,6 +118,8 @@ Under the full management API prefix these are exposed by the backend as `/v0/ma
 - `maskSensitiveText` utility.
 - `cachedAt` fields for quota state types and success states.
 
+Request Monitoring uses an initial snapshot plus SSE increments and cursor catch-up, with event-ID deduplication. Trends, model rankings, and API-key rankings prefer server-side `/usage/aggregates` data and automatically fall back to local detail calculations when unavailable. Hidden tabs pause SSE and React incremental updates, then catch up by cursor when visible again; the page header shows live, reconnecting, background-paused, error, and latest-event states.
+
 ## Repository layout
 
 - `overlay/` — files copied directly into the upstream checkout.

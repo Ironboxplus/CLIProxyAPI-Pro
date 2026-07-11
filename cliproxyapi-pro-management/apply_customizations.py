@@ -905,6 +905,86 @@ def patch_auth_files_page_search(target: Path) -> None:
     )
 
 
+def patch_runtime_detection(target: Path) -> None:
+    version_path = target / 'src/services/api/version.ts'
+    if "apiClient.get('/nodes')" not in read(version_path):
+        return
+
+    client_path = target / 'src/services/api/client.ts'
+    insert_once(
+        client_path,
+        "  private managementKey: string = '';\n",
+        "  private managementKey: string = '';\n  private runtimeKind: ServerRuntimeKind = 'unknown';\n",
+        "private runtimeKind: ServerRuntimeKind",
+    )
+    replace_once(
+        client_path,
+        "    this.apiBase = computeApiUrl(config.apiBase);\n"
+        "    this.managementKey = config.managementKey;\n"
+        "\n"
+        "    if (config.timeout) {\n",
+        "    const nextApiBase = computeApiUrl(config.apiBase);\n"
+        "    const connectionChanged =\n"
+        "      this.apiBase !== nextApiBase || this.managementKey !== config.managementKey;\n"
+        "    this.apiBase = nextApiBase;\n"
+        "    this.managementKey = config.managementKey;\n"
+        "    if (connectionChanged) {\n"
+        "      this.runtimeKind = 'unknown';\n"
+        "    }\n"
+        "\n"
+        "    if (config.timeout) {\n",
+    )
+    insert_once(
+        client_path,
+        "  private readHeader(headers: Record<string, unknown> | undefined, keys: string[]): string | null {\n",
+        "  getRuntimeKind(): ServerRuntimeKind {\n"
+        "    return this.runtimeKind;\n"
+        "  }\n"
+        "\n"
+        "  private readHeader(headers: Record<string, unknown> | undefined, keys: string[]): string | null {\n",
+        "getRuntimeKind(): ServerRuntimeKind",
+    )
+    replace_once(
+        client_path,
+        "        const runtimeKind: ServerRuntimeKind | null =\n"
+        "          homeVersion || homeBuildDate ? 'home' : cpaVersion || cpaBuildDate ? 'cpa' : null;\n"
+        "\n"
+        "        // 触发版本更新事件（后续通过 store 处理）\n",
+        "        const runtimeKind: ServerRuntimeKind | null =\n"
+        "          homeVersion || homeBuildDate ? 'home' : cpaVersion || cpaBuildDate ? 'cpa' : null;\n"
+        "        if (runtimeKind) {\n"
+        "          this.runtimeKind = runtimeKind;\n"
+        "        }\n"
+        "\n"
+        "        // 触发版本更新事件（后续通过 store 处理）\n",
+    )
+
+    replace_all(
+        version_path,
+        "import { isRecord } from '@/utils/helpers';\n",
+        "",
+    )
+    replace_once(
+        version_path,
+        "  async detectRuntimeKind(): Promise<ServerRuntimeKind> {\n"
+        "    try {\n"
+        "      const data = await apiClient.get('/nodes');\n"
+        "      return isRecord(data) && Array.isArray(data.nodes) ? 'home' : 'unknown';\n"
+        "    } catch (error: unknown) {\n"
+        "      const status = isRecord(error) ? error.status : undefined;\n"
+        "      if (status === 404 || status === 405) {\n"
+        "        return 'cpa';\n"
+        "      }\n"
+        "      return 'unknown';\n"
+        "    }\n"
+        "  },\n",
+        "  async detectRuntimeKind(): Promise<ServerRuntimeKind> {\n"
+        "    const runtimeKind = apiClient.getRuntimeKind();\n"
+        "    return runtimeKind === 'unknown' ? 'cpa' : runtimeKind;\n"
+        "  },\n",
+    )
+
+
 def patch_supporting_api_and_types(target: Path) -> None:
     config_path = target / 'src/types/config.ts'
     replace_once(
@@ -1105,6 +1185,7 @@ def main() -> None:
     patch_quota_styles(target)
     patch_account_inspection_page(target)
     patch_auth_files_page_search(target)
+    patch_runtime_detection(target)
     patch_supporting_api_and_types(target)
     patch_locales(target)
     flush_writes()

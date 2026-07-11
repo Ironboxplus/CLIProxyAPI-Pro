@@ -54,6 +54,10 @@ internal/embeddedusage
 - `GET /v0/management/usage/settings` — 读取监控日志保留和 WebDAV 备份设置。
 - `PUT /v0/management/usage/settings` — 写入监控日志保留和 WebDAV 备份设置。
 
+`/usage/events` 和 `/usage/stream` 的 detail 会携带稳定事件 `id`，管理端用它进行增量去重和断线追平。SSE 在事件成功写入 SQLite 后由进程内通知立即唤醒，仅保留低频 keepalive，不再为每个连接每秒轮询数据库。
+
+`/usage/aggregates` 支持 `from_ms`、`to_ms`、`interval=minute|hour|day|all`、`group_by=provider,model,endpoint,api_key_hash`、`api_key_hash` 和 `timezone_offset_minutes`。响应同时返回 `latest_id` 与 `snapshot_at_ms`，用于判断聚合快照新鲜度。
+
 ### JSONL usage 备份与恢复
 
 `/usage/export` 返回 `application/x-ndjson`，一行一个 JSON 对象。

@@ -221,6 +221,24 @@
   padding: 0 10px;
 }
 
+.syncPill.tonegood {
+  border-color: color-mix(in srgb, var(--monitor-green) 30%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-green) 9%, var(--monitor-surface));
+  color: var(--monitor-green);
+}
+
+.syncPill.tonewarn {
+  border-color: color-mix(in srgb, var(--monitor-amber) 30%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-amber) 9%, var(--monitor-surface));
+  color: var(--monitor-amber);
+}
+
+.syncPill.tonebad {
+  border-color: color-mix(in srgb, var(--monitor-red) 30%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-red) 8%, var(--monitor-surface));
+  color: var(--monitor-red);
+}
+
 .quickLinkButton {
   gap: 5px;
   min-height: 32px;
@@ -3879,10 +3897,89 @@
 
 .accountOverviewCardBody .quotaEntryCard {
   gap: 10px;
+  min-width: 0;
+  overflow: hidden;
   padding: 12px;
   border-radius: 10px;
   border: 1px solid color-mix(in srgb, var(--monitor-line) 82%, transparent);
   background: color-mix(in srgb, var(--monitor-surface) 78%, var(--monitor-surface-elevated));
+}
+
+.accountQuotaContent,
+.accountQuotaRow,
+.accountQuotaRowHeader,
+.accountQuotaModel,
+.accountQuotaMeta,
+.accountQuotaPlanValue,
+.accountQuotaPremiumPlanValue,
+.accountQuotaResetCreditRow,
+.accountQuotaResetCreditTime {
+  min-width: 0;
+  max-width: 100%;
+}
+
+.accountQuotaContent,
+.accountQuotaRow {
+  width: 100%;
+}
+
+.accountQuotaRowHeader {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, max-content);
+  align-items: baseline;
+  gap: 8px;
+}
+
+.accountQuotaModel {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountQuotaMeta {
+  display: flex;
+  align-items: baseline;
+  justify-content: flex-end;
+  flex-wrap: nowrap;
+  gap: 8px;
+  width: auto;
+  line-height: 1.4;
+  overflow: hidden;
+  white-space: nowrap;
+}
+
+.accountQuotaAmount {
+  flex: 1 1 auto;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.accountQuotaMeta > :not(.accountQuotaAmount) {
+  flex: 0 0 auto;
+}
+
+.accountQuotaPlanValue {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountQuotaPremiumPlanValue {
+  overflow: hidden;
+  text-align: center;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountQuotaResetCreditRow {
+  align-items: flex-start;
+  flex-wrap: wrap;
+}
+
+.accountQuotaResetCreditTime {
+  flex: 1 1 140px;
+  text-align: left;
 }
 
 .realtimeTable .primaryCell small {
