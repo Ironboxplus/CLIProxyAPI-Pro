@@ -106,6 +106,8 @@ type InspectionSettingsDraft = {
   antigravityDeepProbeEnabled: boolean;
   antigravityDeepProbeModel: string;
   antigravityQuotaMode: AccountInspectionAntigravityQuotaMode;
+  xaiDeepProbeEnabled: boolean;
+  xaiDeepProbeModel: string;
   autoExecuteQuotaLimitDisable: boolean;
   autoExecuteQuotaRecoveryEnable: boolean;
   autoExecuteAccountInvalidAction: AccountInspectionAutoErrorAction;
@@ -114,7 +116,7 @@ type InspectionSettingsDraft = {
 
 type InspectionSettingsDraftField = Exclude<
   keyof InspectionSettingsDraft,
-  'antigravityDeepProbeEnabled' | 'antigravityQuotaMode' | 'autoExecuteQuotaLimitDisable' | 'autoExecuteQuotaRecoveryEnable' | 'autoExecuteAccountInvalidAction' | 'autoExecuteRequestErrorAction'
+  'antigravityDeepProbeEnabled' | 'antigravityQuotaMode' | 'xaiDeepProbeEnabled' | 'autoExecuteQuotaLimitDisable' | 'autoExecuteQuotaRecoveryEnable' | 'autoExecuteAccountInvalidAction' | 'autoExecuteRequestErrorAction'
 >;
 
 type ScheduleDraft = {
@@ -1011,6 +1013,8 @@ const toSettingsDraft = (settings: AccountInspectionConfigurableSettings): Inspe
   antigravityDeepProbeEnabled: settings.antigravityDeepProbeEnabled,
   antigravityDeepProbeModel: settings.antigravityDeepProbeModel,
   antigravityQuotaMode: settings.antigravityQuotaMode,
+  xaiDeepProbeEnabled: settings.xaiDeepProbeEnabled,
+  xaiDeepProbeModel: settings.xaiDeepProbeModel,
   autoExecuteQuotaLimitDisable: settings.autoExecuteQuotaLimitDisable,
   autoExecuteQuotaRecoveryEnable: settings.autoExecuteQuotaRecoveryEnable,
   autoExecuteAccountInvalidAction: settings.autoExecuteAccountInvalidAction,
@@ -1366,6 +1370,8 @@ const sameInspectionSettings = (left: AccountInspectionConfigurableSettings, rig
   left.antigravityDeepProbeEnabled === right.antigravityDeepProbeEnabled &&
   left.antigravityDeepProbeModel === right.antigravityDeepProbeModel &&
   left.antigravityQuotaMode === right.antigravityQuotaMode &&
+  left.xaiDeepProbeEnabled === right.xaiDeepProbeEnabled &&
+  left.xaiDeepProbeModel === right.xaiDeepProbeModel &&
   left.autoExecuteQuotaLimitDisable === right.autoExecuteQuotaLimitDisable &&
   left.autoExecuteQuotaRecoveryEnable === right.autoExecuteQuotaRecoveryEnable &&
   left.autoExecuteAccountInvalidAction === right.autoExecuteAccountInvalidAction &&
@@ -1383,6 +1389,8 @@ const sameSettingsDraft = (left: InspectionSettingsDraft, right: InspectionSetti
   left.antigravityDeepProbeEnabled === right.antigravityDeepProbeEnabled &&
   left.antigravityDeepProbeModel === right.antigravityDeepProbeModel &&
   left.antigravityQuotaMode === right.antigravityQuotaMode &&
+  left.xaiDeepProbeEnabled === right.xaiDeepProbeEnabled &&
+  left.xaiDeepProbeModel === right.xaiDeepProbeModel &&
   left.autoExecuteQuotaLimitDisable === right.autoExecuteQuotaLimitDisable &&
   left.autoExecuteQuotaRecoveryEnable === right.autoExecuteQuotaRecoveryEnable &&
   left.autoExecuteAccountInvalidAction === right.autoExecuteAccountInvalidAction &&
@@ -2456,6 +2464,13 @@ export function AccountInspectionPage() {
     });
   }, []);
 
+  const handleXAIDeepProbeChange = useCallback((value: boolean) => {
+    dispatchBackendState({
+      type: 'updateSettingsDraft',
+      values: { xaiDeepProbeEnabled: value },
+    });
+  }, []);
+
   const handleAntigravityQuotaModeChange = useCallback((value: string) => {
     dispatchBackendState({
       type: 'updateSettingsDraft',
@@ -2563,6 +2578,8 @@ export function AccountInspectionPage() {
         antigravityDeepProbeEnabled: settingsDraft.antigravityDeepProbeEnabled,
         antigravityDeepProbeModel: settingsDraft.antigravityDeepProbeModel,
         antigravityQuotaMode: settingsDraft.antigravityQuotaMode,
+        xaiDeepProbeEnabled: settingsDraft.xaiDeepProbeEnabled,
+        xaiDeepProbeModel: settingsDraft.xaiDeepProbeModel,
         autoExecuteQuotaLimitDisable: settingsDraft.autoExecuteQuotaLimitDisable,
         autoExecuteQuotaRecoveryEnable: settingsDraft.autoExecuteQuotaRecoveryEnable,
         autoExecuteAccountInvalidAction: settingsDraft.autoExecuteAccountInvalidAction,
@@ -3390,6 +3407,27 @@ export function AccountInspectionPage() {
                       value={settingsDraft.antigravityDeepProbeModel}
                       onChange={(event) => handleSettingsDraftChange('antigravityDeepProbeModel', event.target.value)}
                       disabled={!settingsDraft.antigravityDeepProbeEnabled}
+                    />
+                  </div>
+                </div>
+                <div className={styles.settingsFocusCard}>
+                  <div className={styles.settingsPolicyControl}>
+                    <ToggleSwitch
+                      checked={settingsDraft.xaiDeepProbeEnabled}
+                      onChange={handleXAIDeepProbeChange}
+                      label={t('monitoring.account_inspection_settings_xai_deep_probe_label')}
+                      ariaLabel={t('monitoring.account_inspection_settings_xai_deep_probe_label')}
+                      labelPosition="left"
+                    />
+                  </div>
+                  <span>{t('monitoring.account_inspection_settings_xai_deep_probe_hint')}</span>
+                  <div className={!settingsDraft.xaiDeepProbeEnabled ? styles.settingsMutedField : undefined}>
+                    <Input
+                      label={t('monitoring.account_inspection_settings_xai_deep_probe_model_label')}
+                      hint={t('monitoring.account_inspection_settings_xai_deep_probe_model_hint')}
+                      value={settingsDraft.xaiDeepProbeModel}
+                      onChange={(event) => handleSettingsDraftChange('xaiDeepProbeModel', event.target.value)}
+                      disabled={!settingsDraft.xaiDeepProbeEnabled}
                     />
                   </div>
                 </div>

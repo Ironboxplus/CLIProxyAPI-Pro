@@ -5,6 +5,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
@@ -1049,5 +1050,90 @@ func TestXAIBillingURLMatchesUpstreamQuotaConfig(t *testing.T) {
 	}
 	if got := xaiBillingWeeklyURL(); got != "https://cli-chat-proxy.grok.com/v1/billing?format=credits" {
 		t.Fatalf("xaiBillingWeeklyURL() = %q, want upstream weekly billing endpoint", got)
+	}
+}
+
+func TestXAIDeepProbeDefaultsAndNormalization(t *testing.T) {
+	defaults := defaultAccountInspectionSettings()
+	if defaults.XAIDeepProbeEnabled {
+		t.Fatal("xAI deep probe should be disabled by default")
+	}
+	if defaults.XAIDeepProbeModel != "grok-4.5" {
+		t.Fatalf("default xAI deep probe model = %q, want grok-4.5", defaults.XAIDeepProbeModel)
+	}
+
+	normalized := normalizeAccountInspectionSchedule(accountInspectionSchedule{Settings: accountInspectionSettings{
+		XAIDeepProbeEnabled: true,
+		XAIDeepProbeModel:   "   ",
+	}})
+	if !normalized.Settings.XAIDeepProbeEnabled || normalized.Settings.XAIDeepProbeModel != "grok-4.5" {
+		t.Fatalf("normalized xAI deep probe settings = enabled:%v model:%q", normalized.Settings.XAIDeepProbeEnabled, normalized.Settings.XAIDeepProbeModel)
+	}
+}
+
+func TestXAIResponsesURLUsesConfiguredBaseURL(t *testing.T) {
+	if got := xaiResponsesURL(nil); got != "https://api.x.ai/v1/responses" {
+		t.Fatalf("xaiResponsesURL(nil) = %q", got)
+	}
+	auth := &coreauth.Auth{Attributes: map[string]string{"base_url": "https://xai.example/v1/"}}
+	if got := xaiResponsesURL(auth); got != "https://xai.example/v1/responses" {
+		t.Fatalf("xaiResponsesURL(custom) = %q", got)
+	}
+}
+
+func TestBuildXAIDeepProbeBodyUsesMinimalResponsesRequest(t *testing.T) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(buildXAIDeepProbeBody(" grok-4.3 ")), &payload); err != nil {
+		t.Fatalf("buildXAIDeepProbeBody() JSON error = %v", err)
+	}
+	if payload["model"] != "grok-4.3" || payload["input"] != "ping" || payload["stream"] != true || payload["max_output_tokens"] != float64(1) {
+		t.Fatalf("deep probe payload = %#v", payload)
+	}
+}
+
+func TestClassifyXAIDeepProbeResponse(t *testing.T) {
+	tests := []struct {
+		name string
+		resp accountInspectionHTTPResult
+		want accountInspectionDeepProbeStatus
+	}{
+		{
+			name: "completed sse",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusOK, Body: "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"},
+			want: accountInspectionDeepProbeSuccess,
+		},
+		{
+			name: "free usage exhausted",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusTooManyRequests, Body: `{"code":"subscription:free-usage-exhausted","error":"You've used all the included free usage for now."}`},
+			want: accountInspectionDeepProbeQuota,
+		},
+		{
+			name: "unauthorized",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusUnauthorized, Body: `{"error":{"message":"invalid token"}}`},
+			want: accountInspectionDeepProbeAuthError,
+		},
+		{
+			name: "incomplete success response",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusOK, Body: "data: {\"type\":\"response.created\"}\n\n"},
+			want: accountInspectionDeepProbeTransientError,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _ := classifyXAIDeepProbeResponse(tt.resp)
+			if got != tt.want {
+				t.Fatalf("classifyXAIDeepProbeResponse() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestXAIDeepProbeErrorCodeCanBeCleared(t *testing.T) {
+	decision := accountInspectionDecision{DeepProbeStatus: accountInspectionDeepProbeTransientError}
+	if got := accountInspectionDecisionErrorCode("xai", decision, nil); got != "xai_deep_probe_error" {
+		t.Fatalf("xAI deep probe error code = %q", got)
+	}
+	if !isInspectionAuthErrorCode("xai_deep_probe_error") {
+		t.Fatal("xAI deep probe error code should be clearable after recovery")
 	}
 }

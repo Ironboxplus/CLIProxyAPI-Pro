@@ -77,6 +77,8 @@ type accountInspectionSettings struct {
 	AntigravityDeepProbeEnabled     bool                                  `json:"antigravityDeepProbeEnabled"`
 	AntigravityDeepProbeModel       string                                `json:"antigravityDeepProbeModel"`
 	AntigravityQuotaMode            accountInspectionAntigravityQuotaMode `json:"antigravityQuotaMode"`
+	XAIDeepProbeEnabled             bool                                  `json:"xaiDeepProbeEnabled"`
+	XAIDeepProbeModel               string                                `json:"xaiDeepProbeModel"`
 	AutoExecuteQuotaLimitDisable    bool                                  `json:"autoExecuteQuotaLimitDisable"`
 	AutoExecuteQuotaRecoveryEnable  bool                                  `json:"autoExecuteQuotaRecoveryEnable"`
 	AutoExecuteAccountInvalidAction accountInspectionAction               `json:"autoExecuteAccountInvalidAction"`
@@ -411,6 +413,8 @@ func defaultAccountInspectionSettings() accountInspectionSettings {
 		AntigravityDeepProbeEnabled:     false,
 		AntigravityDeepProbeModel:       "claude-sonnet-4-6",
 		AntigravityQuotaMode:            accountInspectionAntigravityQuotaModeClaudeGpt,
+		XAIDeepProbeEnabled:             false,
+		XAIDeepProbeModel:               "grok-4.5",
 		AutoExecuteQuotaLimitDisable:    false,
 		AutoExecuteQuotaRecoveryEnable:  false,
 		AutoExecuteAccountInvalidAction: accountInspectionActionNone,
@@ -478,6 +482,10 @@ func normalizeAccountInspectionSchedule(input accountInspectionSchedule) account
 	settings.AntigravityQuotaMode = accountInspectionAntigravityQuotaMode(strings.ToLower(strings.TrimSpace(string(settings.AntigravityQuotaMode))))
 	if settings.AntigravityQuotaMode != accountInspectionAntigravityQuotaModeMaxUsed && settings.AntigravityQuotaMode != accountInspectionAntigravityQuotaModeClaudeGpt {
 		settings.AntigravityQuotaMode = defaults.AntigravityQuotaMode
+	}
+	settings.XAIDeepProbeModel = strings.TrimSpace(settings.XAIDeepProbeModel)
+	if settings.XAIDeepProbeModel == "" {
+		settings.XAIDeepProbeModel = defaults.XAIDeepProbeModel
 	}
 	settings.AutoExecuteAccountInvalidAction = normalizeAccountInspectionAutoAction(settings.AutoExecuteAccountInvalidAction)
 	settings.AutoExecuteRequestErrorAction = normalizeAccountInspectionAutoAction(settings.AutoExecuteRequestErrorAction)
@@ -1693,7 +1701,7 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 	result.UsedPercent = decision.UsedPercent
 	result.IsQuota = decision.IsQuota
 	result.Error = decision.Error
-	result.ErrorCode = accountInspectionDecisionErrorCode(decision, statusCode)
+	result.ErrorCode = accountInspectionDecisionErrorCode(account.Provider, decision, statusCode)
 	if decision.DeepProbeStatus != "" {
 		result.DeepProbeTriggered = true
 		result.DeepProbeStatus = string(decision.DeepProbeStatus)
@@ -2125,6 +2133,12 @@ func summarizeInspectionHTTPBody(body string) string {
 		if message := nestedString(nestedMap(payload, "error"), "message", ""); message != "" {
 			return message
 		}
+		if message := stringFromAny(payload["error"]); message != "" {
+			return message
+		}
+		if message := stringFromAny(payload["message"]); message != "" {
+			return message
+		}
 	}
 	if len(body) > 240 {
 		return body[:240]
@@ -2327,7 +2341,159 @@ func (s *accountInspectionScheduler) inspectXAI(ctx context.Context, account acc
 		"weeklyRawShapeHash":  jsonShapeHash(weeklyResp.Body),
 		"monthlyRawShapeHash": jsonShapeHash(monthlyResp.Body),
 	}))
-	return quotaDecision(account, used, billing != nil, settings.UsedPercentThreshold), status, nil
+	decision := quotaDecision(account, used, billing != nil, settings.UsedPercentThreshold)
+	if settings.XAIDeepProbeEnabled && accountInspectionShouldDeepProbe(decision) {
+		return s.applyXAIDeepProbe(ctx, account, settings, decision, status)
+	}
+	return decision, status, nil
+}
+
+func accountInspectionShouldDeepProbe(decision accountInspectionDecision) bool {
+	if decision.UsedPercent == nil || decision.IsQuota {
+		return false
+	}
+	return decision.Action == accountInspectionActionKeep || decision.Action == accountInspectionActionEnable
+}
+
+func (s *accountInspectionScheduler) applyXAIDeepProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, decision accountInspectionDecision, quotaStatus *int) (accountInspectionDecision, *int, error) {
+	model := strings.TrimSpace(settings.XAIDeepProbeModel)
+	if model == "" {
+		decision.DeepProbeStatus = accountInspectionDeepProbeSkipped
+		decision.DeepProbeError = "missing xAI deep probe model"
+		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测跳过：%s", account.identity(), decision.DeepProbeError))
+		return decision, quotaStatus, nil
+	}
+
+	s.appendLog("info", fmt.Sprintf("%s xAI 深度检测开始：%s", account.identity(), model))
+	resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
+		return s.apiCall(ctx, account.Auth, http.MethodPost, xaiResponsesURL(account.Auth), map[string]string{
+			"Authorization": "Bearer $TOKEN$",
+			"Content-Type":  "application/json",
+			"Accept":        "text/event-stream",
+			"Connection":    "Keep-Alive",
+		}, buildXAIDeepProbeBody(model), settings.Timeout)
+	})
+	var probeStatus *int
+	if resp.StatusCode != 0 {
+		probeStatus = intPtr(resp.StatusCode)
+	}
+	if err != nil {
+		message := err.Error()
+		s.syncInspectionAuthError(ctx, account, "xai_deep_probe_error", message, statusValue(probeStatus))
+		decision.Action = accountInspectionActionKeep
+		decision.ActionReason = "xAI 深度检测临时异常，保留账号"
+		decision.Error = message
+		decision.DeepProbeStatus = accountInspectionDeepProbeTransientError
+		decision.DeepProbeError = message
+		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测临时异常：%s", account.identity(), message))
+		return decision, firstStatus(probeStatus, quotaStatus), nil
+	}
+
+	status, message := classifyXAIDeepProbeResponse(resp)
+	switch status {
+	case accountInspectionDeepProbeSuccess:
+		s.clearInspectionAuthError(ctx, account)
+		decision.DeepProbeStatus = accountInspectionDeepProbeSuccess
+		decision.DeepProbeError = ""
+		s.appendLog("success", fmt.Sprintf("%s xAI 深度检测通过", account.identity()))
+		return decision, probeStatus, nil
+	case accountInspectionDeepProbeAuthError:
+		s.syncInspectionAuthStatus(ctx, account, resp.StatusCode)
+		probeDecision := authErrorDecision(account, resp.StatusCode)
+		probeDecision.UsedPercent = decision.UsedPercent
+		probeDecision.DeepProbeStatus = accountInspectionDeepProbeAuthError
+		probeDecision.DeepProbeError = message
+		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测授权异常：%s", account.identity(), message))
+		return probeDecision, probeStatus, nil
+	case accountInspectionDeepProbeQuota:
+		s.clearInspectionAuthError(ctx, account)
+		probeDecision := accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "xAI 深度检测返回额度不可用，建议禁用账号", UsedPercent: decision.UsedPercent, IsQuota: true, DeepProbeStatus: accountInspectionDeepProbeQuota, DeepProbeError: message}
+		if account.Disabled {
+			probeDecision.Action = accountInspectionActionKeep
+			probeDecision.ActionReason = "xAI 深度检测返回额度不可用，但账号已禁用"
+		}
+		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测额度不可用：%s", account.identity(), message))
+		return probeDecision, probeStatus, nil
+	default:
+		s.syncInspectionAuthError(ctx, account, "xai_deep_probe_error", message, resp.StatusCode)
+		decision.Action = accountInspectionActionKeep
+		decision.ActionReason = "xAI 深度检测临时异常，保留账号"
+		decision.Error = message
+		decision.DeepProbeStatus = accountInspectionDeepProbeTransientError
+		decision.DeepProbeError = message
+		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测临时异常：%s", account.identity(), message))
+		return decision, probeStatus, nil
+	}
+}
+
+func xaiResponsesURL(auth *coreauth.Auth) string {
+	baseURL := ""
+	if auth != nil {
+		baseURL = strings.TrimSpace(auth.Attributes["base_url"])
+		if baseURL == "" {
+			baseURL = strings.TrimSpace(stringFromAny(auth.Metadata["base_url"]))
+		}
+	}
+	if baseURL == "" {
+		baseURL = "https://api.x.ai/v1"
+	}
+	return strings.TrimRight(baseURL, "/") + "/responses"
+}
+
+func buildXAIDeepProbeBody(model string) string {
+	raw, _ := json.Marshal(map[string]any{
+		"model":             strings.TrimSpace(model),
+		"input":             "ping",
+		"max_output_tokens": 1,
+		"stream":            true,
+	})
+	return string(raw)
+}
+
+func classifyXAIDeepProbeResponse(resp accountInspectionHTTPResult) (accountInspectionDeepProbeStatus, string) {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		if hasXAICompletedResponse(resp.Body) {
+			return accountInspectionDeepProbeSuccess, ""
+		}
+		return accountInspectionDeepProbeTransientError, "xAI 深度检测响应未完成或格式异常"
+	}
+	message := summarizeInspectionHTTPBody(resp.Body)
+	if message == "" {
+		message = fmt.Sprintf("HTTP %d", resp.StatusCode)
+	}
+	if isAccountErrorStatus(resp.StatusCode) {
+		return accountInspectionDeepProbeAuthError, message
+	}
+	if resp.StatusCode == http.StatusPaymentRequired || isXAIQuotaFailure(resp.Body) {
+		return accountInspectionDeepProbeQuota, message
+	}
+	return accountInspectionDeepProbeTransientError, message
+}
+
+func hasXAICompletedResponse(body string) bool {
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "data:") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		}
+		if line == "" || line == "[DONE]" {
+			continue
+		}
+		var payload map[string]any
+		if json.Unmarshal([]byte(line), &payload) == nil && strings.EqualFold(stringFromAny(payload["type"]), "response.completed") {
+			return true
+		}
+	}
+	return false
+}
+
+func isXAIQuotaFailure(body string) bool {
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "free-usage-exhausted") ||
+		strings.Contains(lower, "quota_exhausted") ||
+		strings.Contains(lower, "quota exhausted") ||
+		strings.Contains(lower, "usage limit") ||
+		strings.Contains(lower, "included free usage")
 }
 
 func (s *accountInspectionScheduler) fetchXAIBillingSummary(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, url string, headers map[string]string) (map[string]any, accountInspectionHTTPResult, error) {
@@ -2723,7 +2889,7 @@ func authInspectionLastErrorCode(auth *coreauth.Auth) string {
 
 func isInspectionAuthErrorCode(code string) bool {
 	switch strings.TrimSpace(code) {
-	case "inspection_http_error", "inspection_probe_error", "antigravity_deep_probe_error", "token_refresh_error":
+	case "inspection_http_error", "inspection_probe_error", "antigravity_deep_probe_error", "xai_deep_probe_error", "token_refresh_error":
 		return true
 	default:
 		return false
@@ -2755,12 +2921,15 @@ func accountInspectionErrorCode(status *int, fallback string) string {
 	return fallback
 }
 
-func accountInspectionDecisionErrorCode(decision accountInspectionDecision, status *int) string {
+func accountInspectionDecisionErrorCode(provider string, decision accountInspectionDecision, status *int) string {
 	if status != nil && isAccountErrorStatus(*status) {
 		return "inspection_http_error"
 	}
 	switch decision.DeepProbeStatus {
 	case accountInspectionDeepProbeAuthError, accountInspectionDeepProbeTransientError:
+		if strings.EqualFold(strings.TrimSpace(provider), "xai") {
+			return "xai_deep_probe_error"
+		}
 		return "antigravity_deep_probe_error"
 	}
 	if decision.Error != "" {

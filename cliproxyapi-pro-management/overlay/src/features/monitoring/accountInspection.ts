@@ -33,6 +33,8 @@ export interface AccountInspectionConfigurableSettings {
   antigravityDeepProbeEnabled: boolean;
   antigravityDeepProbeModel: string;
   antigravityQuotaMode: AccountInspectionAntigravityQuotaMode;
+  xaiDeepProbeEnabled: boolean;
+  xaiDeepProbeModel: string;
   autoExecuteQuotaLimitDisable: boolean;
   autoExecuteQuotaRecoveryEnable: boolean;
   autoExecuteAccountInvalidAction: AccountInspectionAutoErrorAction;
@@ -256,6 +258,8 @@ export const DEFAULT_ACCOUNT_INSPECTION_SETTINGS: AccountInspectionConfigurableS
   antigravityDeepProbeEnabled: false,
   antigravityDeepProbeModel: 'claude-sonnet-4-6',
   antigravityQuotaMode: 'claude-gpt',
+  xaiDeepProbeEnabled: false,
+  xaiDeepProbeModel: 'grok-4.5',
   autoExecuteQuotaLimitDisable: false,
   autoExecuteQuotaRecoveryEnable: false,
   autoExecuteAccountInvalidAction: 'none',
@@ -367,6 +371,8 @@ const readConfigurableSettingsFromConfig = (
     antigravityDeepProbeEnabled: undefined,
     antigravityDeepProbeModel: undefined,
     antigravityQuotaMode: undefined,
+    xaiDeepProbeEnabled: undefined,
+    xaiDeepProbeModel: undefined,
   };
 };
 
@@ -438,6 +444,12 @@ const normalizeConfigurableSettings = (
     antigravityDeepProbeModel: readStringValue(merged.antigravityDeepProbeModel) ||
       DEFAULT_ACCOUNT_INSPECTION_SETTINGS.antigravityDeepProbeModel,
     antigravityQuotaMode: normalizeAntigravityQuotaMode(merged.antigravityQuotaMode),
+    xaiDeepProbeEnabled: readBooleanValue(
+      merged.xaiDeepProbeEnabled,
+      DEFAULT_ACCOUNT_INSPECTION_SETTINGS.xaiDeepProbeEnabled
+    ),
+    xaiDeepProbeModel: readStringValue(merged.xaiDeepProbeModel) ||
+      DEFAULT_ACCOUNT_INSPECTION_SETTINGS.xaiDeepProbeModel,
     autoExecuteAccountInvalidAction: normalizeAutoErrorAction(merged.autoExecuteAccountInvalidAction),
     autoExecuteRequestErrorAction: normalizeAutoErrorAction(merged.autoExecuteRequestErrorAction),
     autoExecuteConfirmations: clampInteger(
