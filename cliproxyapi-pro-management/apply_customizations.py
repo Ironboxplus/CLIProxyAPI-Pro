@@ -354,40 +354,6 @@ def patch_layout(target: Path) -> None:
             )
         else:
             raise RuntimeError(f'Pattern not found in {path}: quota navigation item')
-    flat_routing_item = (
-        "    { path: '/routing', label: t('nav.routing_policy'), icon: sidebarIcons.routing },\n"
-    )
-    flat_monitoring_item = (
-        "    { path: '/monitoring', label: t('nav.monitoring_center'), icon: sidebarIcons.monitoring },\n"
-    )
-    grouped_routing_item = (
-        "        {\n"
-        "          path: '/routing',\n"
-        "          labelKey: 'nav.routing_policy',\n"
-        "          metaKey: 'nav_meta.routing_policy',\n"
-        "          icon: sidebarIcons.routing,\n"
-        "        },\n"
-    )
-    grouped_monitoring_item = (
-        "        {\n"
-        "          path: '/monitoring',\n"
-        "          labelKey: 'nav.monitoring_center',\n"
-        "          metaKey: 'nav_meta.monitoring_center',\n"
-        "          icon: sidebarIcons.monitoring,\n"
-        "        },\n"
-    )
-    text = read(path).replace(flat_routing_item, '').replace(grouped_routing_item, '')
-    if flat_monitoring_item in text:
-        text = text.replace(flat_monitoring_item, flat_routing_item + flat_monitoring_item, 1)
-    elif grouped_monitoring_item in text:
-        text = text.replace(
-            grouped_monitoring_item,
-            grouped_routing_item + grouped_monitoring_item,
-            1,
-        )
-    else:
-        raise RuntimeError(f'Pattern not found in {path}: monitoring navigation item')
-    write(path, text)
     replace_once_if_present(
         path,
         "        {\n"
@@ -408,6 +374,44 @@ def patch_layout(target: Path) -> None:
         "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.monitoring },\n",
         "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n",
     )
+    flat_routing_item = (
+        "    { path: '/routing', label: t('nav.routing_policy'), icon: sidebarIcons.routing },\n"
+    )
+    flat_account_inspection_item = (
+        "    { path: '/account-inspection', label: t('nav.account_inspection'), icon: sidebarIcons.accountInspection },\n"
+    )
+    grouped_routing_item = (
+        "        {\n"
+        "          path: '/routing',\n"
+        "          labelKey: 'nav.routing_policy',\n"
+        "          metaKey: 'nav_meta.routing_policy',\n"
+        "          icon: sidebarIcons.routing,\n"
+        "        },\n"
+    )
+    grouped_account_inspection_item = (
+        "        {\n"
+        "          path: '/account-inspection',\n"
+        "          labelKey: 'nav.account_inspection',\n"
+        "          metaKey: 'nav_meta.account_inspection',\n"
+        "          icon: sidebarIcons.accountInspection,\n"
+        "        },\n"
+    )
+    text = read(path).replace(flat_routing_item, '').replace(grouped_routing_item, '')
+    if flat_account_inspection_item in text:
+        text = text.replace(
+            flat_account_inspection_item,
+            flat_account_inspection_item + flat_routing_item,
+            1,
+        )
+    elif grouped_account_inspection_item in text:
+        text = text.replace(
+            grouped_account_inspection_item,
+            grouped_account_inspection_item + grouped_routing_item,
+            1,
+        )
+    else:
+        raise RuntimeError(f'Pattern not found in {path}: account inspection navigation item')
+    write(path, text)
     replace_once(
         path,
         "            <PageTransition\n",
