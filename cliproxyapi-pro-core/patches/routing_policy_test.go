@@ -2,6 +2,7 @@ package management
 
 import (
 	"net/http"
+	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -95,6 +96,47 @@ func TestRoutingProtectionAvailableProviders(t *testing.T) {
 	}
 	if got := orderedRoutingProtectionAvailableProviders(available, auths); !reflect.DeepEqual(got, want) {
 		t.Fatalf("providers = %#v want %#v", got, want)
+	}
+}
+
+func TestRoutingProtectionAuthFileName(t *testing.T) {
+	tests := []struct {
+		name string
+		auth *coreauth.Auth
+		want string
+	}{
+		{
+			name: "direct file name",
+			auth: &coreauth.Auth{FileName: "antigravity-user@example.com.json"},
+			want: "antigravity-user@example.com.json",
+		},
+		{
+			name: "absolute file path",
+			auth: &coreauth.Auth{FileName: filepath.Join("tmp", "auth", "antigravity-user.json")},
+			want: "antigravity-user.json",
+		},
+		{
+			name: "plugin virtual source",
+			auth: &coreauth.Auth{Attributes: map[string]string{
+				coreauth.AttributeVirtualSource: filepath.Join("tmp", "auth", "antigravity-plugin.json"),
+			}},
+			want: "antigravity-plugin.json",
+		},
+		{
+			name: "path attribute fallback",
+			auth: &coreauth.Auth{Attributes: map[string]string{
+				"path": filepath.Join("tmp", "auth", "antigravity-path.json"),
+			}},
+			want: "antigravity-path.json",
+		},
+		{name: "missing file", auth: &coreauth.Auth{}, want: ""},
+	}
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			if got := routingProtectionAuthFileName(test.auth); got != test.want {
+				t.Fatalf("file name = %q want %q", got, test.want)
+			}
+		})
 	}
 }
 

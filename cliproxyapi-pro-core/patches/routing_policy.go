@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"path/filepath"
 	"sort"
 	"strconv"
 	"strings"
@@ -94,6 +95,7 @@ type routingProtectionEvent struct {
 	Provider    string `json:"provider"`
 	AuthID      string `json:"authId"`
 	AuthIndex   string `json:"authIndex"`
+	FileName    string `json:"fileName"`
 	StatusCode  int    `json:"statusCode"`
 	Mode        string `json:"mode"`
 	Action      string `json:"action"`
@@ -176,6 +178,7 @@ func (c *routingPolicyController) HandleUsage(ctx context.Context, record coreus
 		Provider:    provider,
 		AuthID:      auth.ID,
 		AuthIndex:   auth.Index,
+		FileName:    routingProtectionAuthFileName(auth),
 		StatusCode:  statusCode,
 		Mode:        mode,
 		Action:      "observe",
@@ -365,6 +368,7 @@ func (c *routingPolicyController) reconcile(now time.Time) {
 			Provider:    strings.ToLower(strings.TrimSpace(auth.Provider)),
 			AuthID:      auth.ID,
 			AuthIndex:   auth.Index,
+			FileName:    routingProtectionAuthFileName(auth),
 			Mode:        routingProtectionModeEnforce,
 			Action:      "released",
 			Reason:      "automatic release time reached",
@@ -810,7 +814,7 @@ func (h *Handler) routingProtectionActiveAccounts() []routingProtectionActiveAcc
 			Provider:    strings.ToLower(strings.TrimSpace(auth.Provider)),
 			AuthID:      auth.ID,
 			AuthIndex:   auth.Index,
-			FileName:    auth.FileName,
+			FileName:    routingProtectionAuthFileName(auth),
 			StatusCode:  int(routingProtectionMetadataInt64(metadata, "status_code")),
 			Reason:      stringFromAny(metadata["reason"]),
 			TriggeredAt: routingProtectionMetadataInt64(metadata, "triggered_at"),
@@ -830,6 +834,27 @@ func (h *Handler) routingProtectionActiveAccounts() []routingProtectionActiveAcc
 		return active[i].ReleaseAt < active[j].ReleaseAt
 	})
 	return active
+}
+
+func routingProtectionAuthFileName(auth *coreauth.Auth) string {
+	if auth == nil {
+		return ""
+	}
+	for _, candidate := range []string{
+		auth.FileName,
+		authAttribute(auth, coreauth.AttributeVirtualSource),
+		authAttribute(auth, "path"),
+	} {
+		candidate = strings.TrimSpace(candidate)
+		if candidate == "" {
+			continue
+		}
+		name := filepath.Base(filepath.Clean(candidate))
+		if name != "" && name != "." && name != string(filepath.Separator) {
+			return name
+		}
+	}
+	return ""
 }
 
 func clampRoutingPolicyInt(value, minValue, maxValue int) int {

@@ -348,6 +348,20 @@
   border-radius: 7px;
 }
 
+.runtimeTableScroller {
+  max-height: min(420px, 50vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+
+  .table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    box-shadow: 0 1px 0 var(--border-color);
+  }
+}
+
 .table {
   width: 100%;
   min-width: 980px;
@@ -499,5 +513,9 @@
 
   .toggleField {
     min-height: 64px;
+  }
+
+  .runtimeTableScroller {
+    max-height: min(360px, 55vh);
   }
 }

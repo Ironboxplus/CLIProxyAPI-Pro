@@ -64,6 +64,7 @@ export interface RoutingProtectionEvent {
   provider: string;
   authId: string;
   authIndex: string;
+  fileName: string;
   statusCode: number;
   mode: RoutingProtectionMode;
   action: 'pending' | 'observe' | 'disabled' | 'released' | 'error' | string;

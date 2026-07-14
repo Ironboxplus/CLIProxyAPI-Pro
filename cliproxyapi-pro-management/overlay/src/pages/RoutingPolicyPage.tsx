@@ -749,7 +749,7 @@ export function RoutingPolicyPage() {
               </Button>
             </div>
             {data?.active?.length ? (
-              <div className={styles.tableScroller}>
+              <div className={`${styles.tableScroller} ${styles.runtimeTableScroller}`}>
                 <table className={styles.table}>
                   <thead>
                     <tr>
@@ -804,7 +804,7 @@ export function RoutingPolicyPage() {
               </div>
             </div>
             {data?.recentEvents?.length ? (
-              <div className={styles.tableScroller}>
+              <div className={`${styles.tableScroller} ${styles.runtimeTableScroller}`}>
                 <table className={styles.table}>
                   <thead>
                     <tr>
@@ -822,7 +822,7 @@ export function RoutingPolicyPage() {
                       <tr key={event.id}>
                         <td>{formatTimestamp(event.triggeredAt, i18n.language, '-')}</td>
                         <td><span className={styles.providerTag}>{event.provider}</span></td>
-                        <td><span className={styles.accountIndex}>{event.authIndex || event.authId || '-'}</span></td>
+                        <td><span className={styles.accountIndex}>{event.fileName || event.authIndex || event.authId || '-'}</span></td>
                         <td>{event.statusCode ? <span className={styles.statusCode}>{event.statusCode}</span> : '-'}</td>
                         <td>
                           <span className={`${styles.actionTag} ${styles[`action_${event.action}`] ?? ''}`}>
