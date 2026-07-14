@@ -4477,7 +4477,7 @@ export function MonitoringCenterPage() {
         const reasoningEffort = row.reasoningEffort.trim();
         return reasoningEffort ? (
           <span className={`${styles.realtimeReasoningBadge} ${styles.monoCell}`} title={reasoningEffort}>
-            {reasoningEffort}
+            <StatusBadge tone="good">{reasoningEffort}</StatusBadge>
           </span>
         ) : (
           <span className={styles.mutedText}>-</span>
