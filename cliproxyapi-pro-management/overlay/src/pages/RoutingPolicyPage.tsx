@@ -750,7 +750,16 @@ export function RoutingPolicyPage() {
             </div>
             {data?.active?.length ? (
               <div className={`${styles.tableScroller} ${styles.runtimeTableScroller}`}>
-                <table className={styles.table}>
+                <table className={`${styles.table} ${styles.runtimeTable}`}>
+                  <colgroup>
+                    <col className={styles.runtimeProviderColumn} />
+                    <col className={styles.runtimeAccountColumn} />
+                    <col className={styles.runtimeStatusColumn} />
+                    <col className={styles.runtimeTimeColumn} />
+                    <col className={styles.runtimeReleaseColumn} />
+                    <col />
+                    <col className={styles.runtimeActionsColumn} />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th>{t('routing_policy.runtime.provider')}</th>
@@ -759,7 +768,7 @@ export function RoutingPolicyPage() {
                       <th>{t('routing_policy.runtime.triggered_at')}</th>
                       <th>{t('routing_policy.runtime.release_at')}</th>
                       <th>{t('routing_policy.runtime.reason')}</th>
-                      <th aria-label={t('routing_policy.runtime.actions')} />
+                      <th className={styles.runtimeActionHeader}>{t('routing_policy.runtime.actions')}</th>
                     </tr>
                   </thead>
                   <tbody>
@@ -767,19 +776,20 @@ export function RoutingPolicyPage() {
                       <tr key={account.authIndex}>
                         <td><span className={styles.providerTag}>{account.provider}</span></td>
                         <td>
-                          <strong className={styles.accountName}>
+                          <strong className={styles.accountName} title={account.fileName || account.authIndex}>
                             {account.fileName || account.authIndex}
                           </strong>
                           <span className={styles.accountIndex}>{account.authIndex}</span>
                         </td>
                         <td><span className={styles.statusCode}>{account.statusCode}</span></td>
-                        <td>{formatTimestamp(account.triggeredAt, i18n.language, '-')}</td>
-                        <td>{formatTimestamp(account.releaseAt, i18n.language, t('routing_policy.runtime.manual'))}</td>
+                        <td className={styles.runtimeTimeCell}>{formatTimestamp(account.triggeredAt, i18n.language, '-')}</td>
+                        <td className={styles.runtimeTimeCell}>{formatTimestamp(account.releaseAt, i18n.language, t('routing_policy.runtime.manual'))}</td>
                         <td><span className={styles.reason} title={account.reason}>{account.reason || '-'}</span></td>
-                        <td>
+                        <td className={styles.runtimeActionCell}>
                           <Button
                             variant="secondary"
                             size="sm"
+                            className={styles.runtimeReleaseButton}
                             loading={releasing === account.authIndex}
                             onClick={() => releaseAccount(account.authIndex, account.fileName)}
                           >
@@ -805,7 +815,16 @@ export function RoutingPolicyPage() {
             </div>
             {data?.recentEvents?.length ? (
               <div className={`${styles.tableScroller} ${styles.runtimeTableScroller}`}>
-                <table className={styles.table}>
+                <table className={`${styles.table} ${styles.runtimeTable}`}>
+                  <colgroup>
+                    <col className={styles.runtimeTimeColumn} />
+                    <col className={styles.runtimeProviderColumn} />
+                    <col className={styles.runtimeEventAccountColumn} />
+                    <col className={styles.runtimeStatusColumn} />
+                    <col className={styles.runtimeEventActionColumn} />
+                    <col className={styles.runtimeConfirmationColumn} />
+                    <col />
+                  </colgroup>
                   <thead>
                     <tr>
                       <th>{t('routing_policy.runtime.time')}</th>
@@ -820,9 +839,19 @@ export function RoutingPolicyPage() {
                   <tbody>
                     {data.recentEvents.map((event) => (
                       <tr key={event.id}>
-                        <td>{formatTimestamp(event.triggeredAt, i18n.language, '-')}</td>
+                        <td className={styles.runtimeTimeCell}>{formatTimestamp(event.triggeredAt, i18n.language, '-')}</td>
                         <td><span className={styles.providerTag}>{event.provider}</span></td>
-                        <td><span className={styles.accountIndex}>{event.fileName || event.authIndex || event.authId || '-'}</span></td>
+                        <td>
+                          <strong
+                            className={styles.accountName}
+                            title={event.fileName || event.authIndex || event.authId || '-'}
+                          >
+                            {event.fileName || event.authIndex || event.authId || '-'}
+                          </strong>
+                          {event.fileName && event.authIndex ? (
+                            <span className={styles.accountIndex}>{event.authIndex}</span>
+                          ) : null}
+                        </td>
                         <td>{event.statusCode ? <span className={styles.statusCode}>{event.statusCode}</span> : '-'}</td>
                         <td>
                           <span className={`${styles.actionTag} ${styles[`action_${event.action}`] ?? ''}`}>

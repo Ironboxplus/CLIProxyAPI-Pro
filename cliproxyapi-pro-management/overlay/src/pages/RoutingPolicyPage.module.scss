@@ -362,6 +362,77 @@
   }
 }
 
+.runtimeTable {
+  min-width: 1280px;
+  table-layout: fixed;
+
+  th,
+  td {
+    overflow: hidden;
+  }
+
+  .accountName,
+  .accountIndex,
+  .reason {
+    max-width: 100%;
+  }
+}
+
+.runtimeProviderColumn {
+  width: 130px;
+}
+
+.runtimeAccountColumn {
+  width: 340px;
+}
+
+.runtimeEventAccountColumn {
+  width: 320px;
+}
+
+.runtimeStatusColumn {
+  width: 88px;
+}
+
+.runtimeTimeColumn {
+  width: 180px;
+}
+
+.runtimeReleaseColumn {
+  width: 160px;
+}
+
+.runtimeActionsColumn {
+  width: 120px;
+}
+
+.runtimeEventActionColumn {
+  width: 130px;
+}
+
+.runtimeConfirmationColumn {
+  width: 110px;
+}
+
+.runtimeTimeCell {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.runtimeActionHeader,
+.runtimeActionCell {
+  text-align: right !important;
+}
+
+.runtimeReleaseButton {
+  min-width: 88px;
+  white-space: nowrap;
+
+  > span {
+    white-space: nowrap;
+  }
+}
+
 .table {
   width: 100%;
   min-width: 980px;
