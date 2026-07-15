@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"reflect"
+	"strings"
 	"testing"
 	"time"
 
@@ -169,6 +170,19 @@ func TestRoutingProtectionHasQuotaEvidence(t *testing.T) {
 				t.Fatalf("got %v want %v", got, test.want)
 			}
 		})
+	}
+}
+
+func TestRoutingProtectionReasonPreservesCompleteBody(t *testing.T) {
+	body := `{"error":{"message":"` + strings.Repeat("detailed upstream response ", 20) + `"}}`
+	if len(body) <= 240 {
+		t.Fatalf("test body length = %d, want more than 240", len(body))
+	}
+	got := routingProtectionReason(coreusage.Record{
+		Fail: coreusage.Failure{StatusCode: http.StatusTooManyRequests, Body: body},
+	})
+	if got != body {
+		t.Fatalf("reason was truncated: got %d bytes want %d", len(got), len(body))
 	}
 }
 

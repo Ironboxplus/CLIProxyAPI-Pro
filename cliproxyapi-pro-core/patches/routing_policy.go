@@ -513,9 +513,6 @@ func routingProtectionAnyInt64(value any) (int64, bool) {
 
 func routingProtectionReason(record coreusage.Record) string {
 	body := strings.TrimSpace(record.Fail.Body)
-	if len(body) > 240 {
-		body = body[:240]
-	}
 	if body != "" {
 		return body
 	}
