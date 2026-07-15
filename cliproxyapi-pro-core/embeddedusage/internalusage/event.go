@@ -108,6 +108,8 @@ type Payload struct {
 	FailureCount   int64                    `json:"failure_count"`
 	TotalTokens    int64                    `json:"total_tokens"`
 	LatestID       int64                    `json:"latest_id"`
+	Generation     int64                    `json:"generation"`
+	ResetAtMS      int64                    `json:"reset_at_ms,omitempty"`
 	DetailsCount   int64                    `json:"details_count,omitempty"`
 	DetailsLimit   int64                    `json:"details_limit,omitempty"`
 	DetailsLimited bool                     `json:"details_limited,omitempty"`

@@ -45,6 +45,7 @@ The embedded service exposes these management routes:
 - `GET /v0/management/usage/stream` — SSE stream for live usage updates.
 - `GET /v0/management/usage/export` — JSONL/NDJSON export.
 - `POST /v0/management/usage/import` — JSONL/NDJSON import.
+- `POST /v0/management/usage/reset` — atomically clear request events and derived statistics while preserving monitoring settings, model prices, quota cache, and backups.
 - `GET /v0/management/usage/status` — service status and record counts.
 - `GET /v0/management/usage/quota-cache` — read quota cache entries or stats.
 - `PUT /v0/management/usage/quota-cache` — write a quota cache entry.
@@ -58,7 +59,7 @@ The embedded service exposes these management routes:
 - `GET /v0/management/usage/settings` — read retention, WebDAV, and model-price synchronization settings.
 - `PUT /v0/management/usage/settings` — write retention, WebDAV, and model-price synchronization settings.
 
-Details returned by `/usage/events` and `/usage/stream` include a stable event `id`, which the management UI uses for incremental deduplication and cursor catch-up. SSE connections are awakened by an in-process notification after SQLite commits, with only a low-frequency keepalive instead of one database poll per connection per second.
+Details returned by `/usage/events` and `/usage/stream` include a stable event `id`, which the management UI uses for incremental deduplication and cursor catch-up. Usage responses also include a persistent `generation`; manual resets and retention cleanup advance it, and SSE emits a `reset` event so open pages replace their complete snapshot. SSE connections are awakened by an in-process notification after SQLite commits, with only a low-frequency keepalive instead of one database poll per connection per second.
 
 `/usage/aggregates` supports `from_ms`, `to_ms`, `interval=minute|hour|day|all`, `group_by=provider,model,endpoint,api_key_hash`, `api_key_hash`, and `timezone_offset_minutes`. Responses include `latest_id`, `snapshot_at_ms`, and event-level `estimatedCost` sums so context tiers are never selected from aggregated token totals.
 

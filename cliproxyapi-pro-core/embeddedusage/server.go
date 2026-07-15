@@ -63,6 +63,9 @@ func RegisterGinRoutes(group *gin.RouterGroup) {
 		group.POST("/import", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
+		group.POST("/reset", func(c *gin.Context) {
+			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
+		})
 		group.GET("/status", func(c *gin.Context) {
 			c.JSON(http.StatusServiceUnavailable, gin.H{"error": "usage service is not available"})
 		})
@@ -123,6 +126,7 @@ func (s *Server) RegisterGinRoutes(group *gin.RouterGroup) {
 	group.GET("", s.handleUsage)
 	group.GET("/export", s.handleUsageExport)
 	group.POST("/import", s.handleUsageImport)
+	group.POST("/reset", s.handleUsageReset)
 	group.GET("/status", s.handleStatus)
 	group.GET("/events", s.handleUsageEvents)
 	group.GET("/aggregates", s.handleUsageAggregates)
@@ -203,6 +207,15 @@ func usagePayloadWithDetailLimit(events []internalusage.Event, limit int, detail
 	payload.DetailsLimit = int64(limit)
 	payload.DetailsLimited = detailsLimited
 	return payload
+}
+
+func applyUsageDatasetState(payload *internalusage.Payload, state UsageDatasetState) {
+	payload.Generation = state.Generation
+	payload.ResetAtMS = state.ResetAtMS
+}
+
+func (s *Server) usageDatasetState(ctx context.Context) (UsageDatasetState, error) {
+	return s.store.UsageDatasetState(ctx)
 }
 
 func encodeUsageHistoryCursor(cursor usageHistoryCursor) string {
@@ -297,6 +310,12 @@ func (s *Server) handleUsageHistoryEvents(c *gin.Context) {
 			return
 		}
 		payload := internalusage.BuildPayload(page.Events)
+		state, err := s.usageDatasetState(c.Request.Context())
+		if err != nil {
+			c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+			return
+		}
+		applyUsageDatasetState(&payload, state)
 		payload.DetailsLimit = int64(limit)
 		payload.DetailsLimited = page.HasMore
 		payload.MatchedTotal = page.MatchedTotal
@@ -316,6 +335,12 @@ func (s *Server) handleUsageHistoryEvents(c *gin.Context) {
 		}
 		if latestID <= 0 {
 			payload := internalusage.BuildPayload(nil)
+			state, stateErr := s.usageDatasetState(c.Request.Context())
+			if stateErr != nil {
+				c.JSON(http.StatusInternalServerError, gin.H{"error": stateErr.Error()})
+				return
+			}
+			applyUsageDatasetState(&payload, state)
 			payload.DetailsLimit = int64(limit)
 			c.JSON(http.StatusOK, payload)
 			return
@@ -342,6 +367,12 @@ func (s *Server) handleUsageHistoryEvents(c *gin.Context) {
 		return
 	}
 	payload := internalusage.BuildPayload(page.Events)
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	applyUsageDatasetState(&payload, state)
 	payload.DetailsLimit = int64(limit)
 	payload.DetailsLimited = page.HasMore
 	payload.MatchedTotal = page.MatchedTotal
@@ -378,6 +409,12 @@ func (s *Server) handleUsage(c *gin.Context) {
 		return
 	}
 	payload := internalusage.BuildPayload(events)
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	applyUsageDatasetState(&payload, state)
 	if latestID > payload.LatestID {
 		payload.LatestID = latestID
 	}
@@ -408,7 +445,14 @@ func (s *Server) handleUsageEvents(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
-	c.JSON(http.StatusOK, usagePayloadWithDetailLimit(events, limit, detailsLimited))
+	payload := usagePayloadWithDetailLimit(events, limit, detailsLimited)
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	applyUsageDatasetState(&payload, state)
+	c.JSON(http.StatusOK, payload)
 }
 
 func (s *Server) handleUsageAggregates(c *gin.Context) {
@@ -431,9 +475,16 @@ func (s *Server) handleUsageAggregates(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"items":          buckets,
 		"latest_id":      latestID,
+		"generation":     state.Generation,
+		"reset_at_ms":    state.ResetAtMS,
 		"snapshot_at_ms": time.Now().UnixMilli(),
 	})
 }
@@ -446,6 +497,16 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 	}
 
 	lastID := parseQueryInt64(c, "after_id", 0)
+	clientGeneration := parseQueryInt64(c, "generation", 0)
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	resetRequired := clientGeneration > 0 && clientGeneration != state.Generation
+	if resetRequired {
+		lastID = 0
+	}
 	initialEvents, initialLimit, initialDetailsLimited, err := s.loadUsageEventPage(c.Request.Context(), lastID, s.cfg.BatchSize)
 	if err != nil {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
@@ -472,12 +533,23 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 		return true
 	}
 
+	if resetRequired {
+		payload := internalusage.BuildPayload(nil)
+		applyUsageDatasetState(&payload, state)
+		if !writeEvent("reset", payload) {
+			return
+		}
+		return
+	}
 	if len(initialEvents) == 0 {
-		if !writeEvent("ready", internalusage.BuildPayload(nil)) {
+		payload := internalusage.BuildPayload(nil)
+		applyUsageDatasetState(&payload, state)
+		if !writeEvent("ready", payload) {
 			return
 		}
 	} else {
 		payload := usagePayloadWithDetailLimit(initialEvents, initialLimit, initialDetailsLimited)
+		applyUsageDatasetState(&payload, state)
 		lastID = payload.LatestID
 		if !writeEvent("usage", payload) {
 			return
@@ -486,12 +558,27 @@ func (s *Server) handleUsageStream(c *gin.Context) {
 
 	for {
 		eventSignal := s.store.EventSignal()
+		currentState, err := s.usageDatasetState(c.Request.Context())
+		if err != nil {
+			return
+		}
+		if currentState.Generation != state.Generation {
+			state = currentState
+			lastID = 0
+			payload := internalusage.BuildPayload(nil)
+			applyUsageDatasetState(&payload, state)
+			if !writeEvent("reset", payload) {
+				return
+			}
+			return
+		}
 		events, limit, detailsLimited, err := s.loadUsageEventPage(c.Request.Context(), lastID, s.cfg.BatchSize)
 		if err != nil {
 			return
 		}
 		if len(events) > 0 {
 			payload := usagePayloadWithDetailLimit(events, limit, detailsLimited)
+			applyUsageDatasetState(&payload, state)
 			lastID = payload.LatestID
 			if !writeEvent("usage", payload) {
 				return
@@ -707,6 +794,26 @@ func (s *Server) handleUsageImport(c *gin.Context) {
 	})
 }
 
+func (s *Server) handleUsageReset(c *gin.Context) {
+	var payload struct {
+		Confirm bool `json:"confirm"`
+	}
+	if err := json.NewDecoder(c.Request.Body).Decode(&payload); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": err.Error()})
+		return
+	}
+	if !payload.Confirm {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "reset confirmation is required"})
+		return
+	}
+	result, err := s.store.ResetUsageStatistics(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, result)
+}
+
 func readImportRecordType(raw []byte) (string, error) {
 	var header struct {
 		RecordType string `json:"record_type"`
@@ -771,6 +878,11 @@ func (s *Server) handleStatus(c *gin.Context) {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
 		return
 	}
+	state, err := s.usageDatasetState(c.Request.Context())
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"service":           "embedded-usage-service",
 		"dbPath":            s.cfg.DBPath,
@@ -779,6 +891,8 @@ func (s *Server) handleStatus(c *gin.Context) {
 		"deadLetterSamples": deadLetterSamples,
 		"latestId":          latestID,
 		"latestTimestampMs": latestTimestamp,
+		"generation":        state.Generation,
+		"resetAtMs":         state.ResetAtMS,
 	})
 }
 

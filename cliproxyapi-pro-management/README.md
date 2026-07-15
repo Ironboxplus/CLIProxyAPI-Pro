@@ -238,6 +238,7 @@ Workflow：
 - `/v0/management/usage/stream`
 - `/v0/management/usage/export`
 - `/v0/management/usage/import`
+- `/v0/management/usage/reset`
 - `/v0/management/usage/quota-cache`
 - `/v0/management/usage/model-prices`
 - `/v0/management/usage/settings`

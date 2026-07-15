@@ -2756,6 +2756,39 @@
   background: var(--monitor-surface-elevated);
 }
 
+.settingsDangerSection {
+  border-color: color-mix(in srgb, var(--monitor-red) 32%, var(--monitor-line));
+}
+
+.settingsDangerAction {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--monitor-red) 18%, var(--monitor-line));
+}
+
+.settingsDangerAction > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settingsDangerAction span {
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
+.settingsDangerAction strong {
+  color: var(--monitor-ink);
+  font-size: 16px;
+}
+
+.settingsDangerAction :global(button) {
+  flex: 0 0 auto;
+}
+
 .settingsSectionHeader {
   display: grid;
   gap: 4px;
@@ -5709,6 +5742,15 @@
 
   .settingsGrid {
     grid-template-columns: 1fr;
+  }
+
+  .settingsDangerAction {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settingsDangerAction :global(.btn) {
+    width: 100%;
   }
 
   .segmentButton {

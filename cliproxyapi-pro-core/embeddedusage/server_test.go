@@ -84,6 +84,81 @@ func decodeUsagePayload(t *testing.T, recorder *httptest.ResponseRecorder) inter
 	return payload
 }
 
+func TestHandleUsageResetRequiresConfirmation(t *testing.T) {
+	store := openTestStore(t)
+	router := testUsageRouter(store)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/usage/reset", strings.NewReader(`{"confirm":false}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestHandleUsageResetClearsStatisticsAndReturnsGeneration(t *testing.T) {
+	store := openTestStore(t)
+	insertTestUsageEvents(t, store,
+		testUsageEvent(0, false, 10),
+		testUsageEvent(1, true, 20),
+	)
+	router := testUsageRouter(store)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/usage/reset", strings.NewReader(`{"confirm":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	var result UsageResetResult
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if result.DeletedEvents != 2 || result.Generation <= 1 || result.ResetAtMS <= 0 {
+		t.Fatalf("reset result = %+v, want two deleted events and advanced state", result)
+	}
+
+	usageRecorder := httptest.NewRecorder()
+	usageRequest := httptest.NewRequest(http.MethodGet, "/usage", nil)
+	router.ServeHTTP(usageRecorder, usageRequest)
+	payload := decodeUsagePayload(t, usageRecorder)
+	if payload.TotalRequests != 0 || payload.LatestID != 0 || payload.Generation != result.Generation || payload.ResetAtMS != result.ResetAtMS {
+		t.Fatalf("usage after reset = %+v, want empty generation %d", payload, result.Generation)
+	}
+}
+
+func TestUsageStreamEmitsResetForStaleGeneration(t *testing.T) {
+	store := openTestStore(t)
+	insertTestUsageEvents(t, store, testUsageEvent(0, false, 10))
+	result, err := store.ResetUsageStatistics(context.Background())
+	if err != nil {
+		t.Fatalf("ResetUsageStatistics() error = %v", err)
+	}
+	router := testUsageRouter(store)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/usage/stream?after_id=1&generation=1", nil)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "event: reset\n") || strings.Contains(body, "event: ready\n") {
+		t.Fatalf("stream body = %q, want reset event only", body)
+	}
+	var payload internalusage.Payload
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "data: ") {
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &payload); err != nil {
+				t.Fatalf("json.Unmarshal() error = %v", err)
+			}
+			break
+		}
+	}
+	if payload.Generation != result.Generation || payload.ResetAtMS != result.ResetAtMS {
+		t.Fatalf("reset stream payload = %+v, want generation %d", payload, result.Generation)
+	}
+}
+
 func usageDetailIDs(payload internalusage.Payload) []int64 {
 	ids := make([]int64, 0, payload.DetailsCount)
 	for _, api := range payload.APIs {

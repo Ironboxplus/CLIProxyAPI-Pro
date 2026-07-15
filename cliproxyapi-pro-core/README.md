@@ -45,6 +45,7 @@ internal/embeddedusage
 - `GET /v0/management/usage/stream` — usage 实时更新 SSE 流。
 - `GET /v0/management/usage/export` — JSONL/NDJSON 导出。
 - `POST /v0/management/usage/import` — JSONL/NDJSON 导入。
+- `POST /v0/management/usage/reset` — 原子清空请求事件和派生统计，保留监控设置、模型价格、配额缓存和备份。
 - `GET /v0/management/usage/status` — 服务状态和记录数量。
 - `GET /v0/management/usage/quota-cache` — 读取配额缓存或统计信息。
 - `PUT /v0/management/usage/quota-cache` — 写入配额缓存。
@@ -58,7 +59,7 @@ internal/embeddedusage
 - `GET /v0/management/usage/settings` — 读取监控日志保留、WebDAV 备份和模型价格同步设置。
 - `PUT /v0/management/usage/settings` — 写入监控日志保留、WebDAV 备份和模型价格同步设置。
 
-`/usage/events` 和 `/usage/stream` 的 detail 会携带稳定事件 `id`，管理端用它进行增量去重和断线追平。SSE 在事件成功写入 SQLite 后由进程内通知立即唤醒，仅保留低频 keepalive，不再为每个连接每秒轮询数据库。
+`/usage/events` 和 `/usage/stream` 的 detail 会携带稳定事件 `id`，管理端用它进行增量去重和断线追平。usage 响应还会返回持久化的 `generation`；手动重置或保留期清理推进版本后，SSE 会发送 `reset` 事件，已打开页面据此替换完整快照。SSE 在事件成功写入 SQLite 后由进程内通知立即唤醒，仅保留低频 keepalive，不再为每个连接每秒轮询数据库。
 
 `/usage/aggregates` 支持 `from_ms`、`to_ms`、`interval=minute|hour|day|all`、`group_by=provider,model,endpoint,api_key_hash`、`api_key_hash` 和 `timezone_offset_minutes`。响应同时返回 `latest_id`、`snapshot_at_ms` 和逐事件累加的 `estimatedCost`，避免使用聚合 Token 错选上下文价格阶梯。
 

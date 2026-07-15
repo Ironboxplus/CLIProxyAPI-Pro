@@ -26,6 +26,17 @@ type UsageSummary struct {
 	TotalTokens   int64
 }
 
+type UsageDatasetState struct {
+	Generation int64 `json:"generation"`
+	ResetAtMS  int64 `json:"resetAtMs"`
+}
+
+type UsageResetResult struct {
+	DeletedEvents int64 `json:"deletedEvents"`
+	Generation    int64 `json:"generation"`
+	ResetAtMS     int64 `json:"resetAtMs"`
+}
+
 type UsageEventQueryOptions struct {
 	SnapshotMaxID   int64
 	BeforeTimestamp int64
@@ -93,6 +104,7 @@ type DeadLetterSample struct {
 type usageSummarySnapshot struct {
 	LatestID int64
 	Summary  UsageSummary
+	State    UsageDatasetState
 }
 
 type cachedUsageSummary struct {
@@ -287,6 +299,8 @@ func (s *Store) init() error {
 			success_count integer not null default 0,
 			failure_count integer not null default 0,
 			total_tokens integer not null default 0,
+			generation integer not null default 1,
+			reset_at_ms integer not null default 0,
 			updated_at_ms integer not null
 		)`,
 		`create table if not exists dead_letter_events (
@@ -370,6 +384,8 @@ func (s *Store) init() error {
 		`alter table usage_events add column estimated_cost real`,
 		`alter table usage_events add column price_rule_id integer`,
 		`alter table usage_events add column cost_breakdown_json text`,
+		`alter table usage_summary add column generation integer not null default 1`,
+		`alter table usage_summary add column reset_at_ms integer not null default 0`,
 	} {
 		if _, err := s.db.Exec(statement); err != nil && !isDuplicateColumnError(err) {
 			return err
@@ -498,7 +514,9 @@ func (s *Store) readUsageSummarySnapshot(ctx context.Context) (usageSummarySnaps
 		total_requests,
 		success_count,
 		failure_count,
-		total_tokens
+		total_tokens,
+		generation,
+		reset_at_ms
 		from usage_summary
 		where id = 1`).Scan(
 		&snapshot.LatestID,
@@ -506,8 +524,27 @@ func (s *Store) readUsageSummarySnapshot(ctx context.Context) (usageSummarySnaps
 		&snapshot.Summary.SuccessCount,
 		&snapshot.Summary.FailureCount,
 		&snapshot.Summary.TotalTokens,
+		&snapshot.State.Generation,
+		&snapshot.State.ResetAtMS,
 	)
 	return snapshot, err
+}
+
+func (s *Store) UsageDatasetState(ctx context.Context) (UsageDatasetState, error) {
+	snapshot, err := s.readUsageSummarySnapshot(ctx)
+	if err == sql.ErrNoRows {
+		if rebuildErr := s.rebuildUsageSummary(ctx); rebuildErr != nil {
+			return UsageDatasetState{}, rebuildErr
+		}
+		snapshot, err = s.readUsageSummarySnapshot(ctx)
+	}
+	if err != nil {
+		return UsageDatasetState{}, err
+	}
+	if snapshot.State.Generation <= 0 {
+		snapshot.State.Generation = 1
+	}
+	return snapshot.State, nil
 }
 
 func (s *Store) applyUsageSummaryDelta(ctx context.Context, tx *sql.Tx, latestID int64, delta UsageSummary) error {
@@ -518,8 +555,10 @@ func (s *Store) applyUsageSummaryDelta(ctx context.Context, tx *sql.Tx, latestID
 		success_count,
 		failure_count,
 		total_tokens,
+		generation,
+		reset_at_ms,
 		updated_at_ms
-	) values(1, ?, ?, ?, ?, ?, ?)
+	) values(1, ?, ?, ?, ?, ?, 1, 0, ?)
 	on conflict(id) do update set
 		latest_event_id = max(usage_summary.latest_event_id, excluded.latest_event_id),
 		total_requests = usage_summary.total_requests + excluded.total_requests,
@@ -556,8 +595,10 @@ func (s *Store) rebuildUsageSummary(ctx context.Context) error {
 		success_count,
 		failure_count,
 		total_tokens,
+		generation,
+		reset_at_ms,
 		updated_at_ms
-	) values(1, ?, ?, ?, ?, ?, ?)
+	) values(1, ?, ?, ?, ?, ?, 1, 0, ?)
 	on conflict(id) do update set
 		latest_event_id = excluded.latest_event_id,
 		total_requests = excluded.total_requests,
@@ -1335,6 +1376,7 @@ func (s *Store) DeleteEventsBefore(ctx context.Context, beforeMs int64) (int64, 
 			success_count = max(success_count - ?, 0),
 			failure_count = max(failure_count - ?, 0),
 			total_tokens = max(total_tokens - ?, 0),
+			generation = generation + 1,
 			updated_at_ms = ?
 			where id = 1`,
 			latestID,
@@ -1350,8 +1392,59 @@ func (s *Store) DeleteEventsBefore(ctx context.Context, beforeMs int64) (int64, 
 			return 0, err
 		}
 		s.invalidateUsageSummaryCache()
+		s.notifyEventsChanged()
 	}
 	return affected, nil
+}
+
+func (s *Store) ResetUsageStatistics(ctx context.Context) (UsageResetResult, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return UsageResetResult{}, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	var deletedEvents int64
+	if err := tx.QueryRowContext(ctx, `select count(*) from usage_events`).Scan(&deletedEvents); err != nil {
+		return UsageResetResult{}, err
+	}
+
+	var generation, resetAtMS int64
+	if err := tx.QueryRowContext(ctx, `select generation, reset_at_ms from usage_summary where id = 1`).Scan(&generation, &resetAtMS); err != nil {
+		return UsageResetResult{}, err
+	}
+	if generation <= 0 {
+		generation = 1
+	}
+
+	if deletedEvents > 0 {
+		if _, err := tx.ExecContext(ctx, `delete from usage_events`); err != nil {
+			return UsageResetResult{}, err
+		}
+		generation++
+		resetAtMS = time.Now().UnixMilli()
+		if _, err := tx.ExecContext(ctx, `update usage_summary set
+			latest_event_id = 0,
+			total_requests = 0,
+			success_count = 0,
+			failure_count = 0,
+			total_tokens = 0,
+			generation = ?,
+			reset_at_ms = ?,
+			updated_at_ms = ?
+			where id = 1`, generation, resetAtMS, resetAtMS); err != nil {
+			return UsageResetResult{}, err
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return UsageResetResult{}, err
+	}
+	if deletedEvents > 0 {
+		s.invalidateUsageSummaryCache()
+		s.notifyEventsChanged()
+	}
+	return UsageResetResult{DeletedEvents: deletedEvents, Generation: generation, ResetAtMS: resetAtMS}, nil
 }
 
 func (s *Store) ApplyRetention(ctx context.Context, now time.Time) (int64, error) {

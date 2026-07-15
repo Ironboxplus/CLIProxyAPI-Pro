@@ -858,7 +858,16 @@
       "import_monitoring_settings_restored": "Monitoring settings restored",
       "monitoring_settings_retention_schedule": "Automatic cleanup runs daily at 02:00 server local time. Saving settings also applies cleanup once immediately.",
       "monitoring_settings_webdav_retention_days": "Backup retention days",
-      "monitoring_settings_webdav_retention_hint": "Use 0 to keep all WebDAV backups. Expired usage-export-*.jsonl files are removed after successful backups."
+      "monitoring_settings_webdav_retention_hint": "Use 0 to keep all WebDAV backups. Expired usage-export-*.jsonl files are removed after successful backups.",
+      "monitoring_settings_data_title": "Statistics Data",
+      "monitoring_settings_data_desc": "Permanently remove request events and all derived monitoring statistics. Settings, prices, quota cache, and WebDAV backups are preserved.",
+      "monitoring_settings_data_count": "Stored request events",
+      "monitoring_settings_reset_button": "Reset statistics",
+      "monitoring_settings_resetting": "Resetting...",
+      "monitoring_settings_reset_confirm_title": "Reset all monitoring statistics?",
+      "monitoring_settings_reset_confirm_message": "This permanently deletes {{count}} request events and clears trends, rankings, costs, and realtime logs. This action cannot be undone.",
+      "monitoring_settings_reset_confirm_button": "Reset statistics",
+      "monitoring_settings_reset_success": "Statistics reset completed; {{count}} request events deleted"
     },
     "routing_policy": {
       "title": "Routing Policy",
@@ -1833,7 +1842,16 @@
       "import_monitoring_settings_restored": "Monitoring settings restored",
       "monitoring_settings_retention_schedule": "Automatic cleanup runs daily at 02:00 server local time. Saving settings also applies cleanup once immediately.",
       "monitoring_settings_webdav_retention_days": "Backup retention days",
-      "monitoring_settings_webdav_retention_hint": "Use 0 to keep all WebDAV backups. Expired usage-export-*.jsonl files are removed after successful backups."
+      "monitoring_settings_webdav_retention_hint": "Use 0 to keep all WebDAV backups. Expired usage-export-*.jsonl files are removed after successful backups.",
+      "monitoring_settings_data_title": "Статистические данные",
+      "monitoring_settings_data_desc": "Безвозвратно удаляет события запросов и всю рассчитанную статистику. Настройки, цены, кэш квот и резервные копии WebDAV сохраняются.",
+      "monitoring_settings_data_count": "Сохранённые события запросов",
+      "monitoring_settings_reset_button": "Сбросить статистику",
+      "monitoring_settings_resetting": "Сброс...",
+      "monitoring_settings_reset_confirm_title": "Сбросить всю статистику мониторинга?",
+      "monitoring_settings_reset_confirm_message": "Будет безвозвратно удалено {{count}} событий запросов, а также очищены графики, рейтинги, стоимость и журнал реального времени. Действие нельзя отменить.",
+      "monitoring_settings_reset_confirm_button": "Сбросить статистику",
+      "monitoring_settings_reset_success": "Статистика сброшена; удалено событий запросов: {{count}}"
     },
     "routing_policy": {
       "title": "Политика маршрутизации",
@@ -2808,7 +2826,16 @@
       "import_monitoring_settings_restored": "监控设置已恢复",
       "monitoring_settings_retention_schedule": "自动清理每天服务器本地时间 02:00 执行；保存设置时也会立即清理一次。",
       "monitoring_settings_webdav_retention_days": "备份保留天数",
-      "monitoring_settings_webdav_retention_hint": "设为 0 表示保留全部 WebDAV 备份。成功备份后会删除超过保留天数的 usage-export-*.jsonl 文件。"
+      "monitoring_settings_webdav_retention_hint": "设为 0 表示保留全部 WebDAV 备份。成功备份后会删除超过保留天数的 usage-export-*.jsonl 文件。",
+      "monitoring_settings_data_title": "统计数据",
+      "monitoring_settings_data_desc": "永久删除请求事件及其生成的全部监控统计。监控设置、模型定价、配额缓存和 WebDAV 备份会保留。",
+      "monitoring_settings_data_count": "已存储请求事件",
+      "monitoring_settings_reset_button": "重置统计数据",
+      "monitoring_settings_resetting": "正在重置...",
+      "monitoring_settings_reset_confirm_title": "确认重置全部监控统计？",
+      "monitoring_settings_reset_confirm_message": "将永久删除 {{count}} 条请求事件，并清空趋势、排行、成本和实时日志。此操作无法撤销。",
+      "monitoring_settings_reset_confirm_button": "确认重置",
+      "monitoring_settings_reset_success": "统计数据已重置，共删除 {{count}} 条请求事件"
     },
     "routing_policy": {
       "title": "路由策略",
@@ -3783,7 +3810,16 @@
       "import_monitoring_settings_restored": "監控設定已還原",
       "monitoring_settings_retention_schedule": "自動清理每天伺服器本地時間 02:00 執行；儲存設定時也會立即清理一次。",
       "monitoring_settings_webdav_retention_days": "備份保留天數",
-      "monitoring_settings_webdav_retention_hint": "設為 0 表示保留全部 WebDAV 備份。成功備份後會刪除超過保留天數的 usage-export-*.jsonl 檔案。"
+      "monitoring_settings_webdav_retention_hint": "設為 0 表示保留全部 WebDAV 備份。成功備份後會刪除超過保留天數的 usage-export-*.jsonl 檔案。",
+      "monitoring_settings_data_title": "統計資料",
+      "monitoring_settings_data_desc": "永久刪除請求事件及其產生的全部監控統計。監控設定、模型定價、配額快取和 WebDAV 備份會保留。",
+      "monitoring_settings_data_count": "已儲存請求事件",
+      "monitoring_settings_reset_button": "重設統計資料",
+      "monitoring_settings_resetting": "正在重設...",
+      "monitoring_settings_reset_confirm_title": "確認重設全部監控統計？",
+      "monitoring_settings_reset_confirm_message": "將永久刪除 {{count}} 筆請求事件，並清空趨勢、排行、成本和即時日誌。此操作無法復原。",
+      "monitoring_settings_reset_confirm_button": "確認重設",
+      "monitoring_settings_reset_success": "統計資料已重設，共刪除 {{count}} 筆請求事件"
     },
     "routing_policy": {
       "title": "路由策略",

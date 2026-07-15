@@ -898,6 +898,12 @@ type UsageImportResult = {
   monitoringSettingsRecords?: number;
 };
 
+type UsageResetResult = {
+  deletedEvents: number;
+  generation: number;
+  resetAtMs: number;
+};
+
 const createMonitoringSettingsDraft = (settings?: MonitoringSettings): MonitoringSettingsDraft => ({
   retentionDays: String(settings?.retentionDays ?? 0),
   webdavEnabled: settings?.webdav.enabled ?? false,
@@ -3800,6 +3806,7 @@ export function MonitoringCenterPage() {
   const config = useConfigStore((state) => state.config);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
+  const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const quotaStore = useQuotaStore((state) => state);
   const [timeRange, setTimeRange] = useState<MonitoringTimeRange>('today');
   const [searchInput, setSearchInput] = useState('');
@@ -3813,6 +3820,7 @@ export function MonitoringCenterPage() {
   const [isMonitoringSettingsOpen, setIsMonitoringSettingsOpen] = useState(false);
   const [isMonitoringSettingsLoading, setIsMonitoringSettingsLoading] = useState(false);
   const [isMonitoringSettingsSaving, setIsMonitoringSettingsSaving] = useState(false);
+  const [isMonitoringStatisticsResetting, setIsMonitoringStatisticsResetting] = useState(false);
   const [monitoringSettingsDraft, setMonitoringSettingsDraft] = useState<MonitoringSettingsDraft>(() => createMonitoringSettingsDraft());
   const [priceManagementView, setPriceManagementView] = useState<PriceManagementView>('rules');
   const [priceRuleSearch, setPriceRuleSearch] = useState('');
@@ -3850,6 +3858,7 @@ export function MonitoringCenterPage() {
   const accountQuotaStatesRef = useRef<Record<string, AccountQuotaState>>({});
   const accountQuotaRequestIdsRef = useRef<Record<string, number>>({});
   const realtimeColumnsMenuRef = useRef<HTMLDivElement | null>(null);
+  const usageGenerationRef = useRef(0);
   const deferredSearchInput = useDeferredValue(searchInput);
   const [deferredSearch, setDeferredSearch] = useState(searchInput);
 
@@ -4040,6 +4049,40 @@ export function MonitoringCenterPage() {
       setIsMonitoringSettingsSaving(false);
     }
   }, [monitoringSettingsDraft, refreshAll, showNotification, t]);
+
+  const executeMonitoringStatisticsReset = useCallback(async () => {
+    setIsMonitoringStatisticsResetting(true);
+    try {
+      const result = await apiClient.post<UsageResetResult>('/usage/reset', { confirm: true });
+      setSelectedRealtimeErrorRow(null);
+      setRealtimeLogUsage(null);
+      setRealtimeLogMatchedTotal(0);
+      setRealtimeLogPageCursors(['']);
+      await Promise.all([refreshUsage(), refreshRealtimeLogs(), refreshAggregates()]);
+      showNotification(t('usage_stats.monitoring_settings_reset_success', { count: result.deletedEvents }), 'success');
+    } catch (error) {
+      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
+    } finally {
+      setIsMonitoringStatisticsResetting(false);
+    }
+  }, [refreshAggregates, refreshRealtimeLogs, refreshUsage, showNotification, t]);
+
+  const handleMonitoringStatisticsReset = useCallback(() => {
+    if (connectionStatus !== 'connected') {
+      showNotification(t('notification.connection_required'), 'warning');
+      return;
+    }
+    showConfirmation({
+      title: t('usage_stats.monitoring_settings_reset_confirm_title'),
+      message: t('usage_stats.monitoring_settings_reset_confirm_message', {
+        count: Number(usage?.total_requests) || 0,
+      }),
+      confirmText: t('usage_stats.monitoring_settings_reset_confirm_button'),
+      cancelText: t('common.cancel'),
+      variant: 'danger',
+      onConfirm: executeMonitoringStatisticsReset,
+    });
+  }, [connectionStatus, executeMonitoringStatisticsReset, showConfirmation, showNotification, t, usage?.total_requests]);
   const handleExportUsage = useCallback(async () => {
     if (connectionStatus !== 'connected') {
       showNotification(t('notification.connection_required'), 'warning');
@@ -4133,6 +4176,19 @@ export function MonitoringCenterPage() {
   const combinedError = [usageError, monitoringError, realtimeLogError].filter(Boolean).join('；');
   const hasPrices = Object.keys(modelPrices).length > 0;
   const pendingRealtimeEventCount = realtimeLogSnapshotMaxId > 0 ? Math.max(latestId - realtimeLogSnapshotMaxId, 0) : 0;
+
+  useEffect(() => {
+    const nextGeneration = Number(usage?.generation) || 0;
+    const previousGeneration = usageGenerationRef.current;
+    usageGenerationRef.current = nextGeneration;
+    if (previousGeneration <= 0 || nextGeneration <= 0 || previousGeneration === nextGeneration) return;
+    setSelectedRealtimeErrorRow(null);
+    setRealtimeLogUsage(null);
+    setRealtimeLogMatchedTotal(0);
+    setRealtimeLogPageCursors(['']);
+    void refreshAggregates();
+    void refreshRealtimeLogs();
+  }, [refreshAggregates, refreshRealtimeLogs, usage?.generation]);
 
   useEffect(() => {
     realtimeLogPageRef.current = realtimeLogPage;
@@ -5630,7 +5686,9 @@ export function MonitoringCenterPage() {
 
       <Modal
         open={isMonitoringSettingsOpen}
-        onClose={() => setIsMonitoringSettingsOpen(false)}
+        onClose={() => {
+          if (!isMonitoringStatisticsResetting) setIsMonitoringSettingsOpen(false);
+        }}
         title={t('usage_stats.monitoring_settings')}
         width={760}
         className={styles.monitorModal}
@@ -5722,11 +5780,35 @@ export function MonitoringCenterPage() {
             <small className={styles.settingsHint}>{t('usage_stats.monitoring_settings_webdav_hint')}</small>
           </div>
 
+          <div className={`${styles.settingsSectionCard} ${styles.settingsDangerSection}`}>
+            <div className={styles.settingsSectionHeader}>
+              <strong>{t('usage_stats.monitoring_settings_data_title')}</strong>
+              <span>{t('usage_stats.monitoring_settings_data_desc')}</span>
+            </div>
+            <div className={styles.settingsDangerAction}>
+              <div>
+                <span>{t('usage_stats.monitoring_settings_data_count')}</span>
+                <strong>{formatCompactNumber(Number(usage?.total_requests) || 0)}</strong>
+              </div>
+              <Button
+                variant="danger"
+                size="sm"
+                onClick={handleMonitoringStatisticsReset}
+                disabled={isMonitoringStatisticsResetting || isMonitoringSettingsSaving}
+              >
+                <IconTrash2 size={15} />
+                {isMonitoringStatisticsResetting
+                  ? t('usage_stats.monitoring_settings_resetting')
+                  : t('usage_stats.monitoring_settings_reset_button')}
+              </Button>
+            </div>
+          </div>
+
           <div className={styles.priceActionsBar}>
-            <Button variant="secondary" size="sm" onClick={() => setIsMonitoringSettingsOpen(false)}>
+            <Button variant="secondary" size="sm" onClick={() => setIsMonitoringSettingsOpen(false)} disabled={isMonitoringStatisticsResetting}>
               {t('common.cancel')}
             </Button>
-            <Button variant="primary" size="sm" onClick={() => void handleSaveMonitoringSettings()} disabled={isMonitoringSettingsSaving}>
+            <Button variant="primary" size="sm" onClick={() => void handleSaveMonitoringSettings()} disabled={isMonitoringSettingsSaving || isMonitoringStatisticsResetting}>
               {isMonitoringSettingsSaving ? t('common.loading') : t('common.save')}
             </Button>
           </div>
