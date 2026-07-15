@@ -141,12 +141,28 @@
 
 .heroActions {
   justify-content: flex-end;
+  max-width: 100%;
   gap: 8px;
   padding: 4px;
   border: 1px solid color-mix(in srgb, var(--inspect-line) 72%, transparent);
   border-radius: 14px;
   background: color-mix(in srgb, var(--inspect-surface) 74%, transparent);
   box-shadow: 0 12px 28px -26px rgba(15, 23, 42, 0.5);
+}
+
+.heroExportSelect {
+  min-width: 148px;
+  min-height: 32px;
+  border-color: transparent;
+  background: transparent;
+  color: var(--inspect-muted);
+  box-shadow: none;
+}
+
+.heroExportSelect:hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--inspect-accent) 35%, var(--inspect-line-strong));
+  background: var(--inspect-surface-muted);
+  color: var(--inspect-ink);
 }
 
 .heroActionButton:global(.btn) {

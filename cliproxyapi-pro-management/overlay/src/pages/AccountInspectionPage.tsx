@@ -1652,6 +1652,7 @@ export function AccountInspectionPage() {
   const [recheckingKey, setRecheckingKey] = useState<string | null>(null);
   const [refreshingTokenKey, setRefreshingTokenKey] = useState<string | null>(null);
   const [exportingAuthFiles, setExportingAuthFiles] = useState(false);
+  const [exportAuthFilesProvider, setExportAuthFilesProvider] = useState<string>(ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE);
   const [selectedAssetProvider, setSelectedAssetProvider] = useState<string>('all');
   const [resolvedTheme, setResolvedTheme] = useState<ResolvedTheme>(() => getDocumentTheme());
   const logListRef = useRef<HTMLDivElement | null>(null);
@@ -1971,7 +1972,11 @@ export function AccountInspectionPage() {
     try {
       const response = await authFilesApi.list();
       const files = Array.isArray(response.files)
-        ? response.files.filter(isInspectableAccountInspectionAuthFile)
+        ? response.files.filter((file) =>
+            isInspectableAccountInspectionAuthFile(file) &&
+            (exportAuthFilesProvider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE ||
+              resolveAuthProvider(file) === exportAuthFilesProvider)
+          )
         : [];
       const downloadableFiles = files.filter((file) => typeof file.name === 'string' && file.name.trim());
       const entries = await mapWithConcurrency(
@@ -1999,14 +2004,17 @@ export function AccountInspectionPage() {
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const archive = await buildZipArchive(entries);
-      downloadBlobFile(`auth-files-export-${timestamp}.zip`, archive);
+      const providerSuffix = exportAuthFilesProvider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
+        ? ''
+        : `-${exportAuthFilesProvider}`;
+      downloadBlobFile(`auth-files-export${providerSuffix}-${timestamp}.zip`, archive);
       showNotification(t('monitoring.account_inspection_auth_files_export_success', { count: entries.length }), 'success');
     } catch (error) {
       showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
     } finally {
       setExportingAuthFiles(false);
     }
-  }, [connectionStatus, showNotification, t]);
+  }, [connectionStatus, exportAuthFilesProvider, showNotification, t]);
 
   const handlePauseInspection = useCallback(() => {
     if (runStatus !== 'running') return;
@@ -2695,6 +2703,14 @@ export function AccountInspectionPage() {
             <p className={styles.heroSubtitle}>{t('monitoring.account_inspection_desc')}</p>
           </div>
           <div className={styles.heroActions}>
+            <Select
+              value={exportAuthFilesProvider}
+              options={resultProviderOptions}
+              onChange={setExportAuthFilesProvider}
+              ariaLabel={t('monitoring.account_inspection_auth_files_export_scope')}
+              triggerClassName={styles.heroExportSelect}
+              disabled={exportingAuthFiles || connectionStatus !== 'connected'}
+            />
             <Button
               variant="secondary"
               className={styles.heroActionButton}
