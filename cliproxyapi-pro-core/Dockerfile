@@ -4,8 +4,8 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 
 WORKDIR /src/CLIProxyAPI
 
-ARG CLIPROXY_REPO=router-for-me/CLIProxyAPI
-ARG CLIPROXY_VERSION=""
+ARG CLIPROXY_REPO=Ironboxplus/CLIProxyAPI
+ARG CLIPROXY_VERSION="v7.2.80-ironbox.1"
 ARG CLIPROXY_BUILD_VERSION=""
 ARG GITHUB_TOKEN=""
 ARG TARGETOS

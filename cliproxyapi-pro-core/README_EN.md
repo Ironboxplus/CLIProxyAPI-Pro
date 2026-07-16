@@ -1,6 +1,6 @@
 # CLIProxyAPI Pro Core
 
-Customized Docker build layer for upstream `router-for-me/CLIProxyAPI`.
+Customized Docker build layer based on `Ironboxplus/CLIProxyAPI`. The default source is pinned to `v7.2.80-ironbox.1`, which includes the Claude versioned-thinking-signature fix.
 
 This directory does not maintain a full fork of upstream. During Docker build it downloads an upstream release, copies in the local `embeddedusage/` package, applies the patch script in `patches/`, and builds a multi-arch image for the Pro deployment.
 
@@ -221,8 +221,8 @@ docker build \
 
 Build args:
 
-- `CLIPROXY_REPO` — upstream repository, default `router-for-me/CLIProxyAPI`.
-- `CLIPROXY_VERSION` — upstream release tag. If empty, the Dockerfile resolves the latest release.
+- `CLIPROXY_REPO` — core repository, default `Ironboxplus/CLIProxyAPI`.
+- `CLIPROXY_VERSION` — core tag, default `v7.2.80-ironbox.1`; explicitly pass an empty string to resolve the target repository's latest release.
 - `CLIPROXY_BUILD_VERSION` — optional runtime version. If empty, it uses the upstream version resolved from `CLIPROXY_VERSION`.
 - `GITHUB_TOKEN` — optional token for GitHub API requests.
 

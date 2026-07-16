@@ -7,6 +7,8 @@ on:
 
 env:
   FORCE_JAVASCRIPT_ACTIONS_TO_NODE24: "true"
+  CORE_SOURCE_REPO: Ironboxplus/CLIProxyAPI
+  CORE_SOURCE_TAG: v7.2.80-ironbox.1
 
 jobs:
   check-version:
@@ -30,7 +32,8 @@ jobs:
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           CURRENT_REPO: ${{ github.repository }}
-          CORE_UPSTREAM_REPO: router-for-me/CLIProxyAPI
+          CORE_UPSTREAM_REPO: ${{ env.CORE_SOURCE_REPO }}
+          CORE_SOURCE_TAG: ${{ env.CORE_SOURCE_TAG }}
           MANAGEMENT_UPSTREAM_REPO: router-for-me/Cli-Proxy-API-Management-Center
         run: |
           set -euo pipefail
@@ -54,7 +57,7 @@ jobs:
             [ "$(printf '%s\n%s\n' "${right}" "${left}" | sort -V | tail -n 1)" = "${left}" ] && [ "${left}" != "${right}" ]
           }
 
-          core_tag="$(gh release view --repo "${CORE_UPSTREAM_REPO}" --json tagName --jq '.tagName')"
+          core_tag="${CORE_SOURCE_TAG}"
           management_tag="$(gh release view --repo "${MANAGEMENT_UPSTREAM_REPO}" --json tagName --jq '.tagName')"
           current_tag="$(gh release view --repo "${CURRENT_REPO}" --json tagName --jq '.tagName' 2>/dev/null || true)"
 
@@ -250,7 +253,7 @@ jobs:
       - name: Checkout core upstream release
         uses: actions/checkout@v5
         with:
-          repository: router-for-me/CLIProxyAPI
+          repository: ${{ env.CORE_SOURCE_REPO }}
           ref: ${{ needs.check-version.outputs.core_tag }}
           path: upstream-core
           fetch-depth: 0
@@ -634,7 +637,7 @@ jobs:
       - name: Checkout core upstream release
         uses: actions/checkout@v5
         with:
-          repository: router-for-me/CLIProxyAPI
+          repository: ${{ env.CORE_SOURCE_REPO }}
           ref: ${{ needs.check-version.outputs.core_tag }}
           path: upstream-core
           fetch-depth: 1
@@ -662,7 +665,7 @@ jobs:
       - name: Generate release notes
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          CORE_UPSTREAM_REPO: router-for-me/CLIProxyAPI
+          CORE_UPSTREAM_REPO: ${{ env.CORE_SOURCE_REPO }}
           MANAGEMENT_UPSTREAM_REPO: router-for-me/Cli-Proxy-API-Management-Center
           RELEASE_TAG: ${{ needs.check-version.outputs.release_tag }}
           RELEASE_VERSION: ${{ needs.check-version.outputs.release_version }}
@@ -672,7 +675,7 @@ jobs:
           MANAGEMENT_VERSION: ${{ needs.check-version.outputs.management_version }}
         run: |
           set -euo pipefail
-          core_notes="$(gh release view "${CORE_TAG}" --repo "${CORE_UPSTREAM_REPO}" --json body --jq '.body // ""')"
+          core_notes="$(gh release view "${CORE_TAG}" --repo "${CORE_UPSTREAM_REPO}" --json body --jq '.body // ""' 2>/dev/null || true)"
           management_notes="$(gh release view "${MANAGEMENT_TAG}" --repo "${MANAGEMENT_UPSTREAM_REPO}" --json body --jq '.body // ""')"
           core_sha="$(git -C upstream-core rev-parse HEAD)"
           management_sha="$(git -C upstream-management rev-parse HEAD)"

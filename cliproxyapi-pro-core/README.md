@@ -1,6 +1,6 @@
 # CLIProxyAPI Pro Core
 
-这是 upstream `router-for-me/CLIProxyAPI` 的定制 Docker 构建层。
+这是基于 `Ironboxplus/CLIProxyAPI` 的定制 Docker 构建层；默认固定到 `v7.2.80-ironbox.1`，其中包含 Claude 版本化 thinking 签名修复。
 
 本目录不维护 upstream 的完整 fork。Docker 构建时会下载指定 upstream release，复制本地 `embeddedusage/` 包，执行 `patches/` 中的补丁脚本，然后构建 Pro 部署使用的多架构镜像。
 
@@ -237,8 +237,8 @@ docker build \
 
 可用 build args：
 
-- `CLIPROXY_REPO` — upstream 仓库，默认 `router-for-me/CLIProxyAPI`。
-- `CLIPROXY_VERSION` — upstream release tag。为空时 Dockerfile 自动解析 latest release。
+- `CLIPROXY_REPO` — core 仓库，默认 `Ironboxplus/CLIProxyAPI`。
+- `CLIPROXY_VERSION` — core tag，默认 `v7.2.80-ironbox.1`；显式传空字符串时自动解析目标仓库的 latest release。
 - `CLIPROXY_BUILD_VERSION` — 可选 runtime 版本号。为空时使用 `CLIPROXY_VERSION` 解析到的 upstream 版本。
 - `GITHUB_TOKEN` — 可选 GitHub API token。
 
