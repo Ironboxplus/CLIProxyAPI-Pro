@@ -153,6 +153,17 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 
 该修改会同时影响内置默认配置、`config.example.yaml`，以及 management asset updater 的默认 latest-release API 地址。
 
+### 内置 `cpa-sensitive` 插件
+
+Pro 发布包和 Docker 镜像会在 `plugins/<os>/<arch>/` 中携带独立动态库插件 `cpa-sensitive`。插件源码位于 `plugins/cpa-sensitive/`，不直接耦合 CPA 内部实现；上层补丁只向公开 interceptor metadata 增加稳定的 `cpa_request_id`，用于把请求、普通响应和流式分片关联到同一组隐私占位符。
+
+插件包含两部分：
+
+- Prompt Sanitization：保留 Octopus 的 `replacement_groups`、legacy `system_prompt_replacements`、`models`、`src`、`dst` 和 `order` 顺序替换语义。顶层兼容层显式区分 Claude、Codex/OpenAI Responses 和 OpenAI Chat；CPA 侧新增 `source_formats` / `to_formats` 过滤，其中 `to_formats` 规则在鉴权后、Privacy Shield 前执行。
+- Privacy Shield：在鉴权后扫描最终上游 JSON，支持 Gitleaks、常见 PII 和自定义正则，发送前替换为请求级 marker，并在普通或流式响应中按 JSON 转义规则还原。
+
+默认配置中插件及两个功能均保持关闭。启用方法和完整配置见 [`plugins/cpa-sensitive/README.md`](plugins/cpa-sensitive/README.md)。Octopus 的 legacy `base_urls` 会被读取并产生迁移提示，但不会被静默放宽；CPA interceptor ABI 不暴露 credential endpoint URL，应迁移为 `to_formats`。`pii_types`、aggressive 类型和 debug TTL 可兼容；Octopus per-channel `channels` 没有 CPA channel ID 可映射，应改用 CPA plugin instance 开关。
+
 ### 运行时辅助进程
 
 当以下变量同时配置时，`entrypoint.sh` 会在主 API 进程前启动内置 Komari agent：
@@ -167,6 +178,7 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 - `Dockerfile` — 下载 upstream CLIProxyAPI，应用定制层，并构建最终镜像。
 - `entrypoint.sh` — 启动 Komari、主 API 和 WebDAV usage 恢复逻辑。
 - `embeddedusage/` — 内嵌 SQLite usage service 和 management routes。
+- `plugins/cpa-sensitive/` — 独立 Prompt Sanitization / Privacy Shield 动态库插件及测试。
 - `patches/apply_upstream_patches.py` — Docker build 阶段 patch upstream 源码。
 - `patches/account_inspection_scheduler.go` — 注入 upstream management handlers 的后端账号巡检调度器。
 - `.github/workflows/release-core.yml` — 镜像发布、Pro 二进制资产、management.html 发布、usage 备份、Render 部署触发、Telegram 通知和 workflow 清理。

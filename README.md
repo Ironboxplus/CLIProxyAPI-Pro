@@ -182,6 +182,8 @@ Docker 构建参数中 `CLIPROXY_VERSION` 用于下载 upstream core tag，`CLIP
 
 二进制资产平台和压缩格式与 upstream CLIProxyAPI 保持一致，版本号使用 Pro release tag，因此资产名前缀保持为 `CLIProxyAPI`。默认桌面/Linux 包支持动态库插件；`_no-plugin` 包用于静态或受限环境。Docker 镜像对齐 upstream，使用 CGO-enabled Debian 构建并支持动态库插件：
 
+其中 Windows、macOS、Linux 的 plugin-capable 归档和 Docker 镜像会自带 `plugins/<os>/<arch>/cpa-sensitive`。它是从 Octopus Prompt Sanitization / Privacy Shield 独立抽出的插件：CPA 上层只补稳定请求关联 ID、默认配置和打包适配；替换、敏感信息检测、marker 状态与普通/流式响应还原都位于插件目录 [`cliproxyapi-pro-core/plugins/cpa-sensitive`](https://github.com/Ironboxplus/CLIProxyAPI-Pro/tree/main/cliproxyapi-pro-core/plugins/cpa-sensitive)。默认保持关闭。
+
 ```text
 CLIProxyAPI_7.1.18-pro_linux_amd64.tar.gz
 CLIProxyAPI_7.1.18-pro_linux_aarch64.tar.gz

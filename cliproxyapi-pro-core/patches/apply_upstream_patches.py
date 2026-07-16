@@ -173,6 +173,55 @@ replace_once(
     '  panel-github-repository: "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"',
     f'  panel-github-repository: "{PRO_PANEL_REPOSITORY}"',
 )
+replace_once(
+    config_example,
+    '    example:\n      enabled: true',
+    '    example:\n      enabled: false',
+)
+insert_before(
+    config_example,
+    '# When true, disable high-overhead request logging and HTTP middleware features to reduce per-request memory usage under high concurrency.\n',
+    '''    # Bundled Pro plugin extracted from Octopus prompt sanitization and Privacy Shield.
+    # It remains disabled until explicitly enabled because it rewrites request content.
+    cpa-sensitive:
+      enabled: false
+      priority: 10
+      sanitization:
+        enabled: false
+        replacement_groups: []
+      privacy_shield:
+        enabled: false
+        pii_enabled: true
+        max_body_bytes: 1048576
+        max_string_bytes: 262144
+        max_findings: 0
+        pii_types:
+          gitleaks: true
+          email: true
+          phone: true
+          national_id: true
+          bank_card: true
+          ip: true
+          jwt: true
+          uuid: true
+          credential_url: true
+          mac_address: true
+          ipv6: true
+          path: true
+          generic_token: false
+        pii_aggressive: false
+        pii_aggressive_types:
+          relative_path: false
+          username_hostname: false
+          generic_token: false
+          loose_secret: false
+      session:
+        ttl_seconds: 86400
+        max_sessions: 4096
+
+''',
+    '    cpa-sensitive:\n',
+)
 
 insert_before(
     config_go,
@@ -1983,6 +2032,40 @@ func (m *Manager) refreshForInspection(ctx context.Context, id string, force boo
 }
 ''')
 
+handlers_go = ROOT / 'sdk/api/handlers/handlers.go'
+add_go_import(handlers_go, '"github.com/gin-gonic/gin"\n', '\t"github.com/google/uuid"\n')
+insert_before(
+    handlers_go,
+    '\tif pinnedAuthID := pinnedAuthIDFromContext(ctx); pinnedAuthID != "" {\n',
+    '''\t// cpa_request_id is a Pro compatibility extension for stateful interceptor
+\t// plugins. It is stable across request, response, and streaming callbacks but
+\t// contains no credential or prompt data.
+\tmeta["cpa_request_id"] = uuid.NewString()
+''',
+    'meta["cpa_request_id"] = uuid.NewString()',
+)
+
+write_text(ROOT / 'sdk/api/handlers/handlers_cpa_sensitive_metadata_test.go', f'''package handlers
+
+import (
+\t"testing"
+
+\t"github.com/google/uuid"
+\t"golang.org/x/net/context"
+)
+
+func TestRequestExecutionMetadataIncludesCPARequestID(t *testing.T) {{
+\tmeta := requestExecutionMetadata(context.Background())
+\tgot, ok := meta["cpa_request_id"].(string)
+\tif !ok || got == "" {{
+\t\tt.Fatalf("cpa_request_id = %v, want non-empty UUID", meta["cpa_request_id"])
+\t}}
+\tif _, err := uuid.Parse(got); err != nil {{
+\t\tt.Fatalf("cpa_request_id = %q, want UUID: %v", got, err)
+\t}}
+}}
+''')
+
 # A Codex refresh can carry a new id_token with a different plan. The normal
 # auth Update path persists that metadata but, by itself, does not rebuild the
 # model registry entry selected from the old plan_type.
@@ -2291,6 +2374,92 @@ func TestRuntimeAuthRefreshHookReRegistersCodexPlanModels(t *testing.T) {{
 }}
 ''')
 
+write_text(ROOT / 'internal' / 'api' / 'handlers' / 'management' / 'oauth_codex_plan_type_test.go', f'''package management
+
+import (
+	"context"
+	"encoding/base64"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/gin-gonic/gin"
+	"{import_path('internal/auth/codex')}"
+	"{import_path('internal/config')}"
+	coreauth "{import_path('sdk/cliproxy/auth')}"
+)
+
+type planTypeCodexOAuthService struct{{}}
+
+func (planTypeCodexOAuthService) GenerateAuthURL(state string, _ *codex.PKCECodes) (string, error) {{
+	return "https://auth.example.test/oauth?state=" + state, nil
+}}
+
+func (planTypeCodexOAuthService) ExchangeCodeForTokens(_ context.Context, _ string, _ *codex.PKCECodes) (*codex.CodexAuthBundle, error) {{
+	now := time.Now()
+	return &codex.CodexAuthBundle{{
+		TokenData: codex.CodexTokenData{{
+			IDToken:      testCodexPlanIDToken("pro"),
+			AccessToken:  "access-token",
+			RefreshToken: "refresh-token",
+			Email:        "plan-test@example.test",
+			Expire:       now.Add(time.Hour).Format(time.RFC3339),
+		}},
+		LastRefresh: now.Format(time.RFC3339),
+	}}, nil
+}}
+
+func (planTypeCodexOAuthService) CreateTokenStorage(bundle *codex.CodexAuthBundle) *codex.CodexTokenStorage {{
+	return &codex.CodexTokenStorage{{
+		IDToken:      bundle.TokenData.IDToken,
+		AccessToken:  bundle.TokenData.AccessToken,
+		RefreshToken: bundle.TokenData.RefreshToken,
+		Email:        bundle.TokenData.Email,
+		Expire:       bundle.TokenData.Expire,
+		LastRefresh:  bundle.LastRefresh,
+	}}
+}}
+
+func testCodexPlanIDToken(plan string) string {{
+	payload := []byte(`{{"https://api.openai.com/auth":{{"chatgpt_plan_type":"` + plan + `"}}}}`)
+	return "e30." + base64.RawURLEncoding.EncodeToString(payload) + ".signature"
+}}
+
+func TestRequestCodexTokenPropagatesPlanTypeToRuntimeAuth(t *testing.T) {{
+	originalNewCodexOAuthService := newCodexOAuthService
+	newCodexOAuthService = func(*config.Config) codexOAuthService {{ return planTypeCodexOAuthService{{}} }}
+	defer func() {{ newCodexOAuthService = originalNewCodexOAuthService }}()
+
+	authDir := filepath.Join(t.TempDir(), "auths")
+	handler := NewHandlerWithoutConfigFilePath(&config.Config{{AuthDir: authDir}}, nil)
+	planType := make(chan string, 1)
+	handler.postAuthPersistHook = func(_ context.Context, auth *coreauth.Auth) error {{
+		planType <- auth.Attributes["plan_type"]
+		return nil
+	}}
+	router := gin.New()
+	router.GET("/codex-auth-url", handler.RequestCodexToken)
+
+	state := requestCodexTokenState(t, router)
+	defer CompleteOAuthSession(state)
+	if _, err := WriteOAuthCallbackFileForPendingSession(authDir, "codex", state, "test-code", ""); err != nil {{
+		t.Fatalf("write OAuth callback: %v", err)
+	}}
+
+	select {{
+	case got := <-planType:
+		if got != "pro" {{
+			t.Fatalf("runtime auth plan_type = %q, want pro", got)
+		}}
+	case <-time.After(3 * time.Second):
+		t.Fatal("timed out waiting for Codex runtime auth")
+	}}
+	if IsOAuthSessionPending(state, "codex") {{
+		waitForOAuthSessionDone(t, state)
+	}}
+}}
+''')
+
 flush_writes()
 subprocess.run([
     'gofmt',
@@ -2312,5 +2481,8 @@ subprocess.run([
     'sdk/cliproxy/auth/conductor_refresh_hook_test.go',
     'sdk/cliproxy/builder.go',
     'sdk/cliproxy/builder_codex_plan_refresh_test.go',
+    'sdk/api/handlers/handlers.go',
+    'sdk/api/handlers/handlers_cpa_sensitive_metadata_test.go',
+    'internal/api/handlers/management/oauth_codex_plan_type_test.go',
 ], cwd=ROOT, check=True)
 subprocess.run(['go', 'mod', 'tidy'], cwd=ROOT, check=True)

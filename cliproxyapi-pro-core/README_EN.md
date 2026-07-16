@@ -153,6 +153,17 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 
 This affects the built-in default config, `config.example.yaml`, and the management asset updater's default latest-release API URL.
 
+### Bundled `cpa-sensitive` plugin
+
+Pro release archives and Docker images carry the standalone `cpa-sensitive` dynamic library under `plugins/<os>/<arch>/`. Its source lives in `plugins/cpa-sensitive/` and does not import CPA internals. The upper patch layer only adds a stable `cpa_request_id` to public interceptor metadata so requests, non-stream responses, and stream chunks share the same restoration session.
+
+The plugin contains two features:
+
+- Prompt Sanitization preserves Octopus `replacement_groups`, legacy `system_prompt_replacements`, `models`, `src`, `dst`, and ordered replacement semantics. The top compatibility layer explicitly separates Claude, Codex/OpenAI Responses, and OpenAI Chat. CPA-native `source_formats` / `to_formats` filters are supported, with `to_formats` rules running post-auth before Privacy Shield.
+- Privacy Shield scans the final post-auth upstream JSON using Gitleaks, common PII detectors, and optional custom regular expressions. It replaces findings with request-scoped markers and restores them in normal or streaming JSON responses with correct JSON escaping.
+
+The plugin and both features remain disabled in the default configuration. See [`plugins/cpa-sensitive/README.md`](plugins/cpa-sensitive/README.md) for the full configuration. Legacy Octopus `base_urls` are accepted for migration diagnostics but are not silently broadened because the CPA interceptor ABI does not expose credential endpoint URLs; migrate them to `to_formats`. `pii_types`, aggressive detector settings, and the debug TTL are compatible. Octopus per-channel `channels` have no CPA channel ID mapping and should become a CPA plugin-instance switch.
+
 ### Runtime helper process
 
 `entrypoint.sh` can start the bundled Komari agent before the main API process when both variables are configured:
@@ -167,6 +178,7 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `Dockerfile` — downloads upstream CLIProxyAPI, applies this customization layer, and builds the final image.
 - `entrypoint.sh` — starts Komari, starts the main API, and restores WebDAV usage backups.
 - `embeddedusage/` — embedded SQLite usage service and management routes.
+- `plugins/cpa-sensitive/` — standalone Prompt Sanitization / Privacy Shield dynamic plugin and tests.
 - `patches/apply_upstream_patches.py` — patches upstream source during Docker build.
 - `patches/account_inspection_scheduler.go` — backend account-inspection scheduler injected into upstream management handlers.
 - `.github/workflows/release-core.yml` — image publish, Pro binary assets, `management.html` publish, usage backup, Render deployment trigger, Telegram notification, and run cleanup.
