@@ -11,7 +11,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /CLIProxyAPI
 
 COPY binaries/linux/${TARGETARCH}/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
-COPY plugins /CLIProxyAPI/plugins
 COPY config.example.yaml /CLIProxyAPI/config.example.yaml
 COPY entrypoint.sh /CLIProxyAPI/entrypoint.sh
 

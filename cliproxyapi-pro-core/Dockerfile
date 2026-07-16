@@ -36,7 +36,6 @@ COPY patches/routing_policy.go /tmp/routing_policy.go
 COPY patches/routing_policy_test.go /tmp/routing_policy_test.go
 COPY patches/redisqueue_plugin.go /tmp/redisqueue_plugin.go
 COPY patches/redisqueue_usage_toggle.go /tmp/redisqueue_usage_toggle.go
-COPY plugins/cpa-sensitive /src/cpa-sensitive
 
 RUN python3 /tmp/apply_upstream_patches.py
 
@@ -47,14 +46,7 @@ RUN set -eux; \
     BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"; \
     CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -buildvcs=false \
       -ldflags="-s -w -X 'main.Version=${CLIPROXY_BUILD_VERSION}' -X 'main.Commit=release-${CLIPROXY_SOURCE_VERSION}' -X 'main.BuildDate=${BUILD_DATE}'" \
-      -o /out/CLIProxyAPI ./cmd/server/; \
-    mkdir -p "/out/plugins/${TARGETOS:-linux}/${TARGETARCH:-amd64}"; \
-    cd /src/cpa-sensitive; \
-    go mod edit -replace=github.com/router-for-me/CLIProxyAPI/v7=/src/CLIProxyAPI; \
-    go mod tidy; \
-    CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -buildvcs=false -buildmode=c-shared \
-      -o "/out/plugins/${TARGETOS:-linux}/${TARGETARCH:-amd64}/cpa-sensitive.so" .; \
-    rm -f "/out/plugins/${TARGETOS:-linux}/${TARGETARCH:-amd64}/cpa-sensitive.h"
+      -o /out/CLIProxyAPI ./cmd/server/
 
 FROM debian:bookworm
 
@@ -67,7 +59,6 @@ RUN apt-get update && apt-get install -y --no-install-recommends ca-certificates
 WORKDIR /CLIProxyAPI
 
 COPY --from=builder /out/CLIProxyAPI /CLIProxyAPI/CLIProxyAPI
-COPY --from=builder /out/plugins /CLIProxyAPI/plugins
 COPY --from=builder /src/CLIProxyAPI/config.example.yaml /CLIProxyAPI/config.example.yaml
 COPY entrypoint.sh /CLIProxyAPI/entrypoint.sh
 

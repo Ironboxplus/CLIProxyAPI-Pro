@@ -157,7 +157,7 @@ During Docker builds, `CLIPROXY_VERSION` selects the upstream core tag to downlo
 
 Binary asset platforms and archive formats match upstream CLIProxyAPI. The version already carries the Pro release tag, so the asset prefix remains `CLIProxyAPI`. Default desktop/Linux archives support dynamic-library plugins; `_no-plugin` archives are for static or constrained environments. Docker images follow upstream with CGO-enabled Debian builds and dynamic-library plugin support:
 
-Plugin-capable Windows, macOS, and Linux archives, plus the Docker image, bundle `plugins/<os>/<arch>/cpa-sensitive`. This plugin extracts the Octopus Prompt Sanitization / Privacy Shield behavior into a standalone component. CPA's upper layer only provides a stable request correlation ID, default configuration, and packaging; replacement rules, sensitive-data detection, marker state, and normal/stream response restoration live under [`cliproxyapi-pro-core/plugins/cpa-sensitive`](https://github.com/Ironboxplus/CLIProxyAPI-Pro/tree/main/cliproxyapi-pro-core/plugins/cpa-sensitive). It is disabled by default.
+SensitivePromptMasker is not bundled with CPA Pro archives or Docker images. It is maintained and released independently at [`Ironboxplus/SensitivePromptMasker`](https://github.com/Ironboxplus/SensitivePromptMasker) and is loaded through CPA's official dynamic-plugin ABI. Docker deployments should mount the plugin release artifact into the plugin directory separately. CPA Pro retains only generic host support and request-correlation compatibility, so core and plugin can be upgraded, rolled back, or disabled independently.
 
 ```text
 CLIProxyAPI_7.1.18-pro_linux_amd64.tar.gz

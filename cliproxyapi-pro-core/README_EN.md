@@ -2,8 +2,6 @@
 
 Customized Docker build layer based on `Ironboxplus/CLIProxyAPI`. The default source is pinned to `v7.2.80-ironbox.1`, which includes the Claude versioned-thinking-signature fix.
 
-During builds, the bundled `cpa-sensitive` plugin replaces its CPA SDK dependency with the same patched core source tree, preventing the plugin and host from compiling against different interface definitions.
-
 This directory does not maintain a full fork of upstream. During Docker build it downloads an upstream release, copies in the local `embeddedusage/` package, applies the patch script in `patches/`, and builds a multi-arch image for the Pro deployment.
 
 ## What this customization adds
@@ -165,16 +163,16 @@ https://github.com/ssfun/CLIProxyAPI-Pro
 
 This affects the built-in default config, `config.example.yaml`, and the management asset updater's default latest-release API URL.
 
-### Bundled `cpa-sensitive` plugin
+### External SensitivePromptMasker plugin
 
-Pro release archives and Docker images carry the standalone `cpa-sensitive` dynamic library under `plugins/<os>/<arch>/`. Its source lives in `plugins/cpa-sensitive/` and does not import CPA internals. The upper patch layer only adds a stable `cpa_request_id` to public interceptor metadata so requests, non-stream responses, and stream chunks share the same restoration session.
+SensitivePromptMasker is a fully independent dynamic-plugin project. Its source, tests, tags, and binary releases live in [`Ironboxplus/SensitivePromptMasker`](https://github.com/Ironboxplus/SensitivePromptMasker). CPA Pro does not vendor its source or compile/copy it into core releases or Docker images. The upper compatibility layer only exposes a stable `cpa_request_id` through public interceptor metadata; CPA Pro runs normally when the plugin is absent.
 
 The plugin contains two features:
 
 - Prompt Sanitization preserves Octopus `replacement_groups`, legacy `system_prompt_replacements`, `models`, `src`, `dst`, and ordered replacement semantics. The top compatibility layer explicitly separates Claude, Codex/OpenAI Responses, and OpenAI Chat. CPA-native `source_formats` / `to_formats` filters are supported, with `to_formats` rules running post-auth before Privacy Shield.
 - Privacy Shield scans the final post-auth upstream JSON using Gitleaks, common PII detectors, and optional custom regular expressions. It replaces findings with request-scoped markers and restores them in normal or streaming JSON responses with correct JSON escaping.
 
-The plugin and both features remain disabled in the default configuration. See [`plugins/cpa-sensitive/README.md`](plugins/cpa-sensitive/README.md) for the full configuration. Legacy Octopus `base_urls` are accepted for migration diagnostics but are not silently broadened because the CPA interceptor ABI does not expose credential endpoint URLs; migrate them to `to_formats`. `pii_types`, aggressive detector settings, and the debug TTL are compatible. Octopus per-channel `channels` have no CPA channel ID mapping and should become a CPA plugin-instance switch.
+The compatibility config remains disabled by default. To use the plugin, download the platform-specific dynamic library from a SensitivePromptMasker release, place it in CPA's configured plugin directory (a read-only volume mount is recommended for Docker), and enable it according to the standalone README. Core and plugin can be upgraded or rolled back independently.
 
 ### Runtime helper process
 
@@ -190,7 +188,6 @@ It then starts `CLIProxyAPI` and optionally restores the latest usage backup fro
 - `Dockerfile` — downloads upstream CLIProxyAPI, applies this customization layer, and builds the final image.
 - `entrypoint.sh` — starts Komari, starts the main API, and restores WebDAV usage backups.
 - `embeddedusage/` — embedded SQLite usage service and management routes.
-- `plugins/cpa-sensitive/` — standalone Prompt Sanitization / Privacy Shield dynamic plugin and tests.
 - `patches/apply_upstream_patches.py` — patches upstream source during Docker build.
 - `patches/account_inspection_scheduler.go` — backend account-inspection scheduler injected into upstream management handlers.
 - `.github/workflows/release-core.yml` — image publish, Pro binary assets, `management.html` publish, usage backup, Render deployment trigger, Telegram notification, and run cleanup.

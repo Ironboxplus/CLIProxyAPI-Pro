@@ -147,7 +147,6 @@ jobs:
           tar -xzf "${amd64_archive}" -C "${tmp_dir}/amd64"
 
           cp "${tmp_dir}/amd64/cli-proxy-api" "${context_dir}/binaries/linux/amd64/CLIProxyAPI"
-          cp -R "${tmp_dir}/amd64/plugins" "${context_dir}/plugins"
           cp "${tmp_dir}/amd64/config.example.yaml" "${context_dir}/config.example.yaml"
           cp customizations-repo/cliproxyapi-pro-core/entrypoint.sh "${context_dir}/entrypoint.sh"
           cp customizations-repo/cliproxyapi-pro-core/Dockerfile.runtime "${context_dir}/Dockerfile.runtime"
@@ -294,12 +293,6 @@ jobs:
           git -C upstream-core fetch --depth 1 https://github.com/router-for-me/models.git main
           git -C upstream-core show FETCH_HEAD:models.json > upstream-core/internal/registry/models/models.json
           python customizations-repo/cliproxyapi-pro-core/patches/apply_upstream_patches.py
-          cp -R customizations-repo/cliproxyapi-pro-core/plugins/cpa-sensitive upstream-core/.pro-cpa-sensitive
-          (
-            cd upstream-core/.pro-cpa-sensitive
-            go mod edit -replace=github.com/router-for-me/CLIProxyAPI/v7=..
-            go mod tidy
-          )
           cp customizations-repo/README.md upstream-core/README.md
           cp customizations-repo/README_EN.md upstream-core/README_EN.md
           cd upstream-core
@@ -343,23 +336,11 @@ jobs:
             -ldflags="-s -w -X main.Version=${RELEASE_TAG} -X main.Commit=release-${CORE_TAG} -X main.BuildDate=${BUILD_DATE}" \
             -o "${archive_dir}/${binary_name}" ./cmd/server/
 
-          plugin_ext="so"
-          if [ "${GOOS}" = "windows" ]; then plugin_ext="dll"; fi
-          if [ "${GOOS}" = "darwin" ]; then plugin_ext="dylib"; fi
-          plugin_dir="${archive_dir}/plugins/${GOOS}/${GOARCH}"
-          mkdir -p "${plugin_dir}"
-          (
-            cd .pro-cpa-sensitive
-            CGO_ENABLED=1 GOOS="${GOOS}" GOARCH="${GOARCH}" go build -buildvcs=false -buildmode=c-shared \
-              -o "../${plugin_dir}/cpa-sensitive.${plugin_ext}" .
-          )
-          rm -f "${plugin_dir}/cpa-sensitive.h"
-
           cp LICENSE README.md README_EN.md config.example.yaml "${archive_dir}/"
           if [ "${ARCHIVE_FORMAT}" = "zip" ]; then
             powershell -NoProfile -Command "Compress-Archive -Path '${archive_dir}/*' -DestinationPath 'dist/${archive_name}' -Force"
           else
-            tar -C "${archive_dir}" -czf "dist/${archive_name}" "${binary_name}" plugins LICENSE README.md README_EN.md config.example.yaml
+            tar -C "${archive_dir}" -czf "dist/${archive_name}" "${binary_name}" LICENSE README.md README_EN.md config.example.yaml
           fi
 
       - name: Build Linux glibc plugin-capable archive
@@ -400,15 +381,6 @@ jobs:
                 -ldflags="-s -w -X main.Version=${RELEASE_TAG} -X main.Commit=release-${CORE_TAG} -X main.BuildDate=${BUILD_DATE}" \
                 -o "'"${archive_dir}"'/cli-proxy-api" ./cmd/server/
 
-              plugin_dir="'"${archive_dir}"'/plugins/linux/${GOARCH}"
-              mkdir -p "${plugin_dir}"
-              (
-                cd .pro-cpa-sensitive
-                CGO_ENABLED=1 GOOS=linux GOARCH="${GOARCH}" go build -buildvcs=false -buildmode=c-shared \
-                  -o "../${plugin_dir}/cpa-sensitive.so" .
-              )
-              rm -f "${plugin_dir}/cpa-sensitive.h"
-
               glibc_versions="$(readelf --version-info "'"${archive_dir}"'/cli-proxy-api" | sed -n "s/.*Name: GLIBC_\([0-9.]*\).*/\1/p" | sort -Vu)"
               if [ -n "${glibc_versions}" ]; then
                 printf "GLIBC versions:\n%s\n" "${glibc_versions}"
@@ -421,7 +393,7 @@ jobs:
             '
 
           cp LICENSE README.md README_EN.md config.example.yaml "${archive_dir}/"
-          tar -C "${archive_dir}" -czf "dist/${archive_name}" cli-proxy-api plugins LICENSE README.md README_EN.md config.example.yaml
+          tar -C "${archive_dir}" -czf "dist/${archive_name}" cli-proxy-api LICENSE README.md README_EN.md config.example.yaml
 
       - name: Install FreeBSD plugin build dependencies
         if: matrix.kind == 'freebsd-plugin'
@@ -731,7 +703,7 @@ jobs:
             echo "## Assets"
             echo
             echo "- Pro core default desktop/Linux binaries are built with CGO enabled and support dynamic library plugins when the target platform supports them."
-            echo "- Plugin-capable Windows, macOS, and Linux archives bundle the cpa-sensitive Prompt Sanitization / Privacy Shield plugin under plugins/<os>/<arch>/."
+            echo "- SensitivePromptMasker is released and deployed independently; Pro archives do not bundle its source or dynamic library."
             echo "- Pro core \`_no-plugin\` binaries are CGO-free portable builds for static or constrained environments."
             echo "- Pro Docker images follow upstream with CGO-enabled Debian builds and dynamic library plugin support."
             echo "- Pro management panel is published as management.html for automatic panel updates."
