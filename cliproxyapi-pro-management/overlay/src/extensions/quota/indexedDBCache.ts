@@ -9,11 +9,11 @@ const STORE_QUOTAS = 'quotas';
 const STORE_METADATA = 'metadata';
 const MAX_ENTRIES = 500;
 
-interface QuotaCacheEntry {
+interface QuotaCacheEntry<T = unknown> {
   id: string;                // Composite key: "provider:fileName"
   provider: string;          // "claude" | "antigravity" | "codex" | "kimi" | "xai"
   fileName: string;          // "file1.json"
-  data: any;                 // Quota data (native object, no serialization needed)
+  data: T;                   // Quota data (native object, no serialization needed)
   cachedAt: number;          // Data fetch timestamp
   accessedAt: number;        // Last access timestamp (for LRU)
   version: number;           // Data structure version (for migration)
@@ -116,7 +116,7 @@ class IndexedDBQuotaCache {
         const request = store.get(key);
 
         request.onsuccess = () => {
-          const entry: QuotaCacheEntry | undefined = request.result;
+          const entry = request.result as QuotaCacheEntry<T> | undefined;
           if (!entry) {
             resolve(null);
             return;
@@ -126,7 +126,7 @@ class IndexedDBQuotaCache {
           entry.accessedAt = Date.now();
           store.put(entry);
 
-          resolve(entry.data as T);
+          resolve(entry.data);
         };
 
         request.onerror = () => {
@@ -143,10 +143,10 @@ class IndexedDBQuotaCache {
   /**
    * Batch get quota data (for preloading)
    */
-  async batchGet(provider: string, fileNames: string[]): Promise<Map<string, any>> {
+  async batchGet<T = unknown>(provider: string, fileNames: string[]): Promise<Map<string, T>> {
     try {
       const db = await this.ensureDB();
-      const result = new Map<string, any>();
+      const result = new Map<string, T>();
 
       return new Promise((resolve) => {
         const transaction = db.transaction([STORE_QUOTAS], 'readwrite');
@@ -158,7 +158,7 @@ class IndexedDBQuotaCache {
           const request = store.get(key);
 
           request.onsuccess = () => {
-            const entry: QuotaCacheEntry | undefined = request.result;
+            const entry = request.result as QuotaCacheEntry<T> | undefined;
             if (entry) {
               // Update access time
               entry.accessedAt = Date.now();
@@ -190,7 +190,7 @@ class IndexedDBQuotaCache {
   /**
    * Save quota data
    */
-  async set(provider: string, fileName: string, data: any, cachedAt: number = Date.now()): Promise<void> {
+  async set<T>(provider: string, fileName: string, data: T, cachedAt: number = Date.now()): Promise<void> {
     try {
       const db = await this.ensureDB();
       const key = this.makeKey(provider, fileName);
@@ -205,7 +205,7 @@ class IndexedDBQuotaCache {
         getRequest.onsuccess = () => {
           const isNew = !getRequest.result;
 
-          const entry: QuotaCacheEntry = {
+          const entry: QuotaCacheEntry<T> = {
             id: key,
             provider,
             fileName,

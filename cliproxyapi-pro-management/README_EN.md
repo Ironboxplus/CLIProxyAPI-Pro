@@ -37,10 +37,16 @@ Model price settings are persisted through the backend SQLite API instead of nor
 
 - `GET /usage/model-prices`
 - `PUT /usage/model-prices`
+- `GET|PUT|DELETE /usage/model-price-rules`
+- `POST /usage/model-prices/sync`
+- `GET /usage/model-prices/sync-status`
+- `POST /usage/model-prices/recalculate`
 
 If the backend has no saved prices, the UI can migrate old `localStorage` price settings once. Normal reads and writes then use SQLite.
 
-Model prices are also included in usage JSONL export/import as a `model_prices` metadata record, so WebDAV usage backups can restore cost settings with usage events.
+Rules are keyed by `(provider, model)` and support input, output, cache-read, cache-write, multiple context-size tiers, and service-tier overrides. Prices can be synchronized manually or periodically from models.dev; only models observed in request history are persisted, and locked manual rules are not overwritten.
+
+The backend selects pricing per request and snapshots the estimated cost on each usage event. Aggregate APIs sum those event costs. JSONL export/import preserves both complete rules and cost snapshots.
 
 ### SQLite-backed quota persistence
 
@@ -209,6 +215,7 @@ These frontend customizations expect the customized `cliproxyapi-pro-core` backe
 - `/v0/management/usage/stream`
 - `/v0/management/usage/export`
 - `/v0/management/usage/import`
+- `/v0/management/usage/reset`
 - `/v0/management/usage/quota-cache`
 - `/v0/management/usage/model-prices`
 - `/v0/management/usage/settings`

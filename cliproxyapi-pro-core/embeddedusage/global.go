@@ -8,6 +8,8 @@ import (
 var globalService *Service
 var accountInspectionScheduleExporter func() (jsonBytes []byte, ok bool, err error)
 var accountInspectionScheduleImporter func(jsonBytes []byte) error
+var accountInspectionSnapshotExporter func() (jsonBytes []byte, ok bool, err error)
+var accountInspectionSnapshotImporter func(jsonBytes []byte) error
 
 func SetDefaultService(service *Service) {
 	globalService = service
@@ -16,6 +18,11 @@ func SetDefaultService(service *Service) {
 func SetAccountInspectionScheduleHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
 	accountInspectionScheduleExporter = exporter
 	accountInspectionScheduleImporter = importer
+}
+
+func SetAccountInspectionSnapshotHandlers(exporter func() ([]byte, bool, error), importer func([]byte) error) {
+	accountInspectionSnapshotExporter = exporter
+	accountInspectionSnapshotImporter = importer
 }
 
 func defaultServer() *Server {

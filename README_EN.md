@@ -40,7 +40,7 @@ Main capabilities:
 - Builds Pro binary release assets using the same platform matrix and archive formats as upstream.
 - Embeds a SQLite usage service.
 - Exposes `/v0/management/usage` API routes, including status, incremental event polling, and SSE streaming.
-- Supports usage JSONL/NDJSON import and export, including usage events, model prices, quota cache, and account-inspection schedules.
+- Supports usage JSONL/NDJSON import and export, including usage events, model prices, quota cache, account-inspection schedules, and the latest inspection-result snapshot.
 - Supports WebDAV usage backup restore.
 - Supports SQLite-backed quota cache.
 - Supports model price persistence.
@@ -263,11 +263,12 @@ It stores:
 
 - usage SQLite database: `usage.sqlite`
 - account-inspection schedule file: `account-inspection-schedule.json`
+- latest account-inspection result snapshot: `account-inspection-snapshot.json`
 - quota cache
 - model prices
 - monitoring settings
 
-Usage export/import uses NDJSON metadata records for model prices, quota cache, monitoring settings, and the account-inspection schedule, so WebDAV backup restore can recover the monitoring-related state together with usage events. Monitoring log retention runs daily at 02:00 server local time and also runs once immediately when settings are saved; WebDAV backups can use separate retention days, deleting expired `usage-export-*.jsonl` files after successful backups.
+Usage export/import uses NDJSON metadata records for model prices, quota cache, monitoring settings, the account-inspection schedule, and the latest finished inspection-result snapshot, so WebDAV backup restore can recover the monitoring-related state together with usage events. Restored inspection snapshots are read-only for migration and troubleshooting; a new full inspection must run before rechecking accounts, refreshing tokens, or changing account state. Inspection logs are not included. Monitoring log retention runs daily at 02:00 server local time and also runs once immediately when settings are saved; WebDAV backups can use separate retention days, deleting expired `usage-export-*.jsonl` files after successful backups.
 
 Configure a persistent volume for this directory in production.
 

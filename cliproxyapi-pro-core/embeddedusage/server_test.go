@@ -7,6 +7,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"testing"
 	"time"
@@ -82,6 +83,81 @@ func decodeUsagePayload(t *testing.T, recorder *httptest.ResponseRecorder) inter
 		t.Fatalf("json.Unmarshal() error = %v; body=%s", err, recorder.Body.String())
 	}
 	return payload
+}
+
+func TestHandleUsageResetRequiresConfirmation(t *testing.T) {
+	store := openTestStore(t)
+	router := testUsageRouter(store)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/usage/reset", strings.NewReader(`{"confirm":false}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusBadRequest {
+		t.Fatalf("status = %d, want 400; body=%s", recorder.Code, recorder.Body.String())
+	}
+}
+
+func TestHandleUsageResetClearsStatisticsAndReturnsGeneration(t *testing.T) {
+	store := openTestStore(t)
+	insertTestUsageEvents(t, store,
+		testUsageEvent(0, false, 10),
+		testUsageEvent(1, true, 20),
+	)
+	router := testUsageRouter(store)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodPost, "/usage/reset", strings.NewReader(`{"confirm":true}`))
+	request.Header.Set("Content-Type", "application/json")
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	var result UsageResetResult
+	if err := json.Unmarshal(recorder.Body.Bytes(), &result); err != nil {
+		t.Fatalf("json.Unmarshal() error = %v", err)
+	}
+	if result.DeletedEvents != 2 || result.Generation <= 1 || result.ResetAtMS <= 0 {
+		t.Fatalf("reset result = %+v, want two deleted events and advanced state", result)
+	}
+
+	usageRecorder := httptest.NewRecorder()
+	usageRequest := httptest.NewRequest(http.MethodGet, "/usage", nil)
+	router.ServeHTTP(usageRecorder, usageRequest)
+	payload := decodeUsagePayload(t, usageRecorder)
+	if payload.TotalRequests != 0 || payload.LatestID != 0 || payload.Generation != result.Generation || payload.ResetAtMS != result.ResetAtMS {
+		t.Fatalf("usage after reset = %+v, want empty generation %d", payload, result.Generation)
+	}
+}
+
+func TestUsageStreamEmitsResetForStaleGeneration(t *testing.T) {
+	store := openTestStore(t)
+	insertTestUsageEvents(t, store, testUsageEvent(0, false, 10))
+	result, err := store.ResetUsageStatistics(context.Background())
+	if err != nil {
+		t.Fatalf("ResetUsageStatistics() error = %v", err)
+	}
+	router := testUsageRouter(store)
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/usage/stream?after_id=1&generation=1", nil)
+	router.ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusOK {
+		t.Fatalf("status = %d, want 200; body=%s", recorder.Code, recorder.Body.String())
+	}
+	body := recorder.Body.String()
+	if !strings.Contains(body, "event: reset\n") || strings.Contains(body, "event: ready\n") {
+		t.Fatalf("stream body = %q, want reset event only", body)
+	}
+	var payload internalusage.Payload
+	for _, line := range strings.Split(body, "\n") {
+		if strings.HasPrefix(line, "data: ") {
+			if err := json.Unmarshal([]byte(strings.TrimPrefix(line, "data: ")), &payload); err != nil {
+				t.Fatalf("json.Unmarshal() error = %v", err)
+			}
+			break
+		}
+	}
+	if payload.Generation != result.Generation || payload.ResetAtMS != result.ResetAtMS {
+		t.Fatalf("reset stream payload = %+v, want generation %d", payload, result.Generation)
+	}
 }
 
 func usageDetailIDs(payload internalusage.Payload) []int64 {
@@ -458,6 +534,71 @@ func TestUsageExportImportPreservesAntigravitySubscriptionQuotaCache(t *testing.
 	}
 	if restored["planType"] != "ultra" || subscription["plan"] != "ultra" || subscription["tierId"] != "g1-ultra-tier" {
 		t.Fatalf("restored quota = %#v, want antigravity ultra subscription preserved", restored)
+	}
+}
+
+func TestUsageExportImportRestoresLatestAccountInspectionSnapshot(t *testing.T) {
+	defer SetAccountInspectionSnapshotHandlers(nil, nil)
+
+	sourceSnapshot := json.RawMessage(`{
+		"version": 1,
+		"state": "completed",
+		"lastStartedAt": 1000,
+		"lastFinishedAt": 2000,
+		"settings": {"targetType": "xai", "workers": 4, "deleteWorkers": 4, "timeout": 15000},
+		"summary": {"totalFiles": 1, "probeSetCount": 1, "sampledCount": 1},
+		"healthCounts": {"total": 1, "inspectionError": 1},
+		"results": [{"key": "xai.json::xai-1", "provider": "xai", "fileName": "xai.json", "authIndex": "xai-1", "action": "keep", "error": "upstream error", "errorDetail": "{\"error\":{\"message\":\"raw upstream response\"}}"}]
+	}`)
+	SetAccountInspectionSnapshotHandlers(func() ([]byte, bool, error) {
+		return sourceSnapshot, true, nil
+	}, nil)
+
+	sourceStore := openTestStore(t)
+	sourceRouter := testUsageRouter(sourceStore)
+	exportRecorder := httptest.NewRecorder()
+	exportRequest := httptest.NewRequest(http.MethodGet, "/usage/export", nil)
+	sourceRouter.ServeHTTP(exportRecorder, exportRequest)
+	if exportRecorder.Code != http.StatusOK {
+		t.Fatalf("export status = %d, want 200; body=%s", exportRecorder.Code, exportRecorder.Body.String())
+	}
+	if !bytes.Contains(exportRecorder.Body.Bytes(), []byte(`"record_type":"account_inspection_snapshot"`)) {
+		t.Fatalf("export body does not contain account inspection snapshot: %s", exportRecorder.Body.String())
+	}
+
+	var restoredSnapshot json.RawMessage
+	SetAccountInspectionSnapshotHandlers(nil, func(raw []byte) error {
+		restoredSnapshot = append(restoredSnapshot[:0], raw...)
+		return nil
+	})
+	targetStore := openTestStore(t)
+	targetRouter := testUsageRouter(targetStore)
+	importRecorder := httptest.NewRecorder()
+	importRequest := httptest.NewRequest(http.MethodPost, "/usage/import", bytes.NewReader(exportRecorder.Body.Bytes()))
+	targetRouter.ServeHTTP(importRecorder, importRequest)
+	if importRecorder.Code != http.StatusOK {
+		t.Fatalf("import status = %d, want 200; body=%s", importRecorder.Code, importRecorder.Body.String())
+	}
+	var importResult struct {
+		AccountInspectionSnapshot        bool `json:"accountInspectionSnapshot"`
+		AccountInspectionSnapshotRecords int  `json:"accountInspectionSnapshotRecords"`
+	}
+	if err := json.Unmarshal(importRecorder.Body.Bytes(), &importResult); err != nil {
+		t.Fatalf("json.Unmarshal(import result) error = %v", err)
+	}
+	if !importResult.AccountInspectionSnapshot || importResult.AccountInspectionSnapshotRecords != 1 {
+		t.Fatalf("import result = %+v, want restored snapshot with one record", importResult)
+	}
+	var sourceValue map[string]any
+	var restoredValue map[string]any
+	if err := json.Unmarshal(sourceSnapshot, &sourceValue); err != nil {
+		t.Fatalf("json.Unmarshal(source snapshot) error = %v", err)
+	}
+	if err := json.Unmarshal(restoredSnapshot, &restoredValue); err != nil {
+		t.Fatalf("json.Unmarshal(restored snapshot) error = %v", err)
+	}
+	if !reflect.DeepEqual(restoredValue, sourceValue) {
+		t.Fatalf("restored snapshot = %#v, want %#v", restoredValue, sourceValue)
 	}
 }
 

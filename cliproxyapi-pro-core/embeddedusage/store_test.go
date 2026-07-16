@@ -41,6 +41,7 @@ func testUsageEvent(index int, failed bool, totalTokens int64) internalusage.Eve
 		StatusCode:        &status,
 		UpstreamRequestID: "upstream-request",
 		RetryAfter:        "30",
+		Stream:            index%2 == 0,
 		ReasoningEffort:   "medium",
 		ServiceTier:       "default",
 		Failed:            failed,
@@ -256,12 +257,16 @@ func TestUsageSummaryPersistsAcrossStoreReopen(t *testing.T) {
 func TestUsageSummaryUpdatesAfterDeleteEventsBefore(t *testing.T) {
 	store := openTestStore(t)
 	ctx := context.Background()
-
+	beforeState, err := store.UsageDatasetState(ctx)
+	if err != nil {
+		t.Fatalf("UsageDatasetState() before delete error = %v", err)
+	}
 	insertTestUsageEvents(t, store,
 		testUsageEvent(0, false, 10),
 		testUsageEvent(1, true, 20),
 		testUsageEvent(2, false, 30),
 	)
+	signal := store.EventSignal()
 	deleted, err := store.DeleteEventsBefore(ctx, testUsageEvent(2, false, 30).TimestampMS)
 	if err != nil {
 		t.Fatalf("DeleteEventsBefore() error = %v", err)
@@ -279,6 +284,119 @@ func TestUsageSummaryUpdatesAfterDeleteEventsBefore(t *testing.T) {
 	}
 	if summary.TotalRequests != 1 || summary.SuccessCount != 1 || summary.FailureCount != 0 || summary.TotalTokens != 30 {
 		t.Fatalf("UsageSummary() after delete = %+v, want total=1 success=1 failure=0 tokens=30", summary)
+	}
+	afterState, err := store.UsageDatasetState(ctx)
+	if err != nil {
+		t.Fatalf("UsageDatasetState() after delete error = %v", err)
+	}
+	if afterState.Generation != beforeState.Generation+1 {
+		t.Fatalf("generation after delete = %d, want %d", afterState.Generation, beforeState.Generation+1)
+	}
+	select {
+	case <-signal:
+	case <-time.After(time.Second):
+		t.Fatal("retention delete did not notify subscribers")
+	}
+}
+
+func TestResetUsageStatisticsClearsOnlyUsageEvents(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	settings := MonitoringSettings{RetentionDays: 30}
+	if err := store.SetMonitoringSettings(ctx, settings); err != nil {
+		t.Fatalf("SetMonitoringSettings() error = %v", err)
+	}
+	if err := store.AddDeadLetter(ctx, `{"authorization":"secret"}`, errTestParse); err != nil {
+		t.Fatalf("AddDeadLetter() error = %v", err)
+	}
+	insertTestUsageEvents(t, store,
+		testUsageEvent(0, false, 10),
+		testUsageEvent(1, true, 20),
+	)
+	latestIDBefore, _, err := store.LatestCursor(ctx)
+	if err != nil {
+		t.Fatalf("LatestCursor() before reset error = %v", err)
+	}
+	stateBefore, err := store.UsageDatasetState(ctx)
+	if err != nil {
+		t.Fatalf("UsageDatasetState() before reset error = %v", err)
+	}
+	signal := store.EventSignal()
+
+	result, err := store.ResetUsageStatistics(ctx)
+	if err != nil {
+		t.Fatalf("ResetUsageStatistics() error = %v", err)
+	}
+	if result.DeletedEvents != 2 {
+		t.Fatalf("deleted events = %d, want 2", result.DeletedEvents)
+	}
+	if result.Generation != stateBefore.Generation+1 || result.ResetAtMS <= 0 {
+		t.Fatalf("reset state = %+v, want generation %d and reset timestamp", result, stateBefore.Generation+1)
+	}
+	select {
+	case <-signal:
+	case <-time.After(time.Second):
+		t.Fatal("reset did not notify subscribers")
+	}
+
+	events, deadLetters, err := store.Counts(ctx)
+	if err != nil {
+		t.Fatalf("Counts() error = %v", err)
+	}
+	if events != 0 || deadLetters != 1 {
+		t.Fatalf("counts after reset = events:%d deadLetters:%d, want 0/1", events, deadLetters)
+	}
+	latestID, _, err := store.LatestCursor(ctx)
+	if err != nil {
+		t.Fatalf("LatestCursor() after reset error = %v", err)
+	}
+	if latestID != 0 {
+		t.Fatalf("latest id after reset = %d, want 0", latestID)
+	}
+	storedSettings, err := store.GetMonitoringSettings(ctx)
+	if err != nil {
+		t.Fatalf("GetMonitoringSettings() error = %v", err)
+	}
+	if storedSettings.RetentionDays != settings.RetentionDays {
+		t.Fatalf("retention days after reset = %d, want %d", storedSettings.RetentionDays, settings.RetentionDays)
+	}
+
+	insertTestUsageEvents(t, store, testUsageEvent(2, false, 30))
+	newEvents, err := store.EventsAfter(ctx, 0, 10)
+	if err != nil {
+		t.Fatalf("EventsAfter() error = %v", err)
+	}
+	if len(newEvents) != 1 || newEvents[0].ID <= latestIDBefore {
+		t.Fatalf("new event ids = %+v, want one id greater than %d", newEvents, latestIDBefore)
+	}
+	stateAfter, err := store.UsageDatasetState(ctx)
+	if err != nil {
+		t.Fatalf("UsageDatasetState() after insert error = %v", err)
+	}
+	if stateAfter.Generation != result.Generation {
+		t.Fatalf("generation after new insert = %d, want %d", stateAfter.Generation, result.Generation)
+	}
+}
+
+func TestResetUsageStatisticsOnEmptyStoreIsNoop(t *testing.T) {
+	store := openTestStore(t)
+	ctx := context.Background()
+	stateBefore, err := store.UsageDatasetState(ctx)
+	if err != nil {
+		t.Fatalf("UsageDatasetState() error = %v", err)
+	}
+	signal := store.EventSignal()
+	result, err := store.ResetUsageStatistics(ctx)
+	if err != nil {
+		t.Fatalf("ResetUsageStatistics() error = %v", err)
+	}
+	if result.DeletedEvents != 0 || result.Generation != stateBefore.Generation || result.ResetAtMS != stateBefore.ResetAtMS {
+		t.Fatalf("empty reset result = %+v, want unchanged state %+v", result, stateBefore)
+	}
+	select {
+	case <-signal:
+		t.Fatal("empty reset must not notify subscribers")
+	default:
 	}
 }
 
@@ -326,7 +444,7 @@ func TestRecentEventsUsesRecentIndex(t *testing.T) {
 		id, request_id, event_hash, timestamp_ms, timestamp, provider, executor_type, model, alias, endpoint, method, path,
 		auth_type, auth_index, source, source_hash, api_key_hash,
 		input_tokens, output_tokens, reasoning_tokens, cached_tokens, cache_tokens, total_tokens,
-		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, reasoning_effort, service_tier,
+		latency_ms, ttft_ms, status_code, error_code, error_message, upstream_request_id, retry_after, stream, reasoning_effort, service_tier,
 		failed, raw_json, created_at_ms
 		from usage_events indexed by idx_usage_events_recent
 		order by timestamp_ms desc, id desc
@@ -377,7 +495,7 @@ func TestUsageDiagnosticsRoundTripAndAggregates(t *testing.T) {
 	if got.TTFTMS == nil || *got.TTFTMS != 20 || got.StatusCode == nil || *got.StatusCode != 429 {
 		t.Fatalf("diagnostics = ttft:%v status:%v, want 20/429", got.TTFTMS, got.StatusCode)
 	}
-	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-request" || got.RetryAfter != "30" || got.ReasoningEffort != "medium" || got.ServiceTier != "default" || got.ExecutorType != "TestExecutor" || got.Alias != "client-model" {
+	if got.ErrorCode != "rate_limit" || got.ErrorMessage != "too many requests" || got.UpstreamRequestID != "upstream-request" || got.RetryAfter != "30" || !got.Stream || got.ReasoningEffort != "medium" || got.ServiceTier != "default" || got.ExecutorType != "TestExecutor" || got.Alias != "client-model" {
 		t.Fatalf("diagnostic strings = %+v", got)
 	}
 

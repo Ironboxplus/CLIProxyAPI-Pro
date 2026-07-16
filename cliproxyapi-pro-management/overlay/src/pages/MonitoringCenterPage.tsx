@@ -1,4 +1,5 @@
 import { useCallback, useDeferredValue, useEffect, useId, useMemo, useRef, useState, type ChangeEvent, type CSSProperties, type DragEvent, type MouseEvent as ReactMouseEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { useTranslation } from 'react-i18next';
 import type { TFunction } from 'i18next';
 import { Button } from '@/components/ui/Button';
@@ -9,9 +10,11 @@ import { Select } from '@/components/ui/Select';
 import {
   IconChevronDown,
   IconChevronUp,
+  IconInfo,
   IconRefreshCw,
   IconSearch,
   IconSlidersHorizontal,
+  IconTrash2,
 } from '@/components/ui/icons';
 import {
   buildAccountRowsByAccount,
@@ -36,7 +39,26 @@ import { useAuthStore, useConfigStore, useNotificationStore, useQuotaStore } fro
 import type { AuthFileItem } from '@/types';
 import { maskSensitiveText } from '@/utils/format';
 import { getStatusFromError, isAntigravityFile, isClaudeFile, isCodexFile, isKimiFile, isXaiFile } from '@/utils/quota';
-import { calculateCost, formatCompactNumber, formatDurationMs, formatUsd, normalizeAuthIndex, type ModelPrice } from '@/utils/usage';
+import {
+  calculateCost,
+  deleteModelPriceRule,
+  formatCompactNumber,
+  formatDurationMs,
+  formatUsd,
+  formatUsdPrecise,
+  loadModelPriceRules,
+  loadModelPriceSyncState,
+  normalizeAuthIndex,
+  recalculateModelPriceHistory,
+  saveModelPriceRule,
+  syncModelPricesFromModelsDev,
+  type ModelPrice,
+  type ModelPriceRule,
+  type ModelPriceSyncChangeAction,
+  type ModelPriceSyncResult,
+  type ModelPriceSyncState,
+  type ObservedModelPriceTarget,
+} from '@/utils/usage';
 import {
   ANTIGRAVITY_CONFIG,
   CLAUDE_CONFIG,
@@ -97,6 +119,8 @@ const REALTIME_LOG_COLUMNS_STORAGE_KEY = 'cli-proxy-realtime-log-columns-v2';
 const REALTIME_LOG_COLUMN_KEYS = [
   'type',
   'model',
+  'reasoningEffort',
+  'stream',
   'apiKey',
   'recent',
   'status',
@@ -104,9 +128,10 @@ const REALTIME_LOG_COLUMN_KEYS = [
   'calls',
   'ttft',
   'latency',
-  'time',
-  'usage',
+  'tokens',
+  'cacheRead',
   'cost',
+  'time',
 ] as const;
 type RealtimeLogColumnKey = typeof REALTIME_LOG_COLUMN_KEYS[number];
 type RealtimeLogColumnPreference = {
@@ -126,6 +151,8 @@ type RealtimeLogColumnDefinition = {
 const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, number> = {
   type: 170,
   model: 230,
+  reasoningEffort: 116,
+  stream: 108,
   apiKey: 145,
   recent: 86,
   status: 180,
@@ -133,13 +160,16 @@ const REALTIME_LOG_COLUMN_DEFAULT_WIDTHS: Record<RealtimeLogColumnKey, number> =
   calls: 76,
   ttft: 92,
   latency: 96,
+  tokens: 196,
+  cacheRead: 126,
+  cost: 132,
   time: 164,
-  usage: 210,
-  cost: 92,
 };
 const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
   type: 96,
   model: 132,
+  reasoningEffort: 96,
+  stream: 92,
   apiKey: 104,
   recent: 76,
   status: 120,
@@ -147,11 +177,15 @@ const REALTIME_LOG_COLUMN_MIN_WIDTHS: Record<RealtimeLogColumnKey, number> = {
   calls: 68,
   ttft: 76,
   latency: 76,
+  tokens: 164,
+  cacheRead: 108,
+  cost: 112,
   time: 116,
-  usage: 122,
-  cost: 76,
 };
 const REALTIME_LOG_COLUMN_MAX_WIDTH = 420;
+const REALTIME_LOG_COLUMN_MAX_WIDTHS: Partial<Record<RealtimeLogColumnKey, number>> = {
+  type: 240,
+};
 const REALTIME_LOG_COLUMN_KEY_SET = new Set<RealtimeLogColumnKey>(REALTIME_LOG_COLUMN_KEYS);
 const createDefaultRealtimeLogColumns = (): RealtimeLogColumnPreference[] => (
   REALTIME_LOG_COLUMN_KEYS.map((key) => ({ key, visible: true }))
@@ -180,6 +214,12 @@ const formatStatusRate = (rate: number) => {
   return `${rounded.endsWith('.0') ? rounded.slice(0, -2) : rounded}%`;
 };
 
+const formatTokenCount = (value: number) => Math.max(0, Math.round(Number(value) || 0)).toLocaleString();
+
+const getCacheHitRate = (row: Pick<MonitoringEventRow, 'inputTokens' | 'cachedTokens'>): number | null => (
+  row.inputTokens > 0 ? Math.min(Math.max(row.cachedTokens / row.inputTokens, 0), 1) : null
+);
+
 const isRealtimeLogColumnKey = (value: unknown): value is RealtimeLogColumnKey => (
   typeof value === 'string' && REALTIME_LOG_COLUMN_KEY_SET.has(value as RealtimeLogColumnKey)
 );
@@ -188,7 +228,8 @@ const clampRealtimeLogColumnWidth = (key: RealtimeLogColumnKey, width: unknown) 
   const numericWidth = typeof width === 'number' && Number.isFinite(width)
     ? width
     : REALTIME_LOG_COLUMN_DEFAULT_WIDTHS[key];
-  return Math.min(REALTIME_LOG_COLUMN_MAX_WIDTH, Math.max(REALTIME_LOG_COLUMN_MIN_WIDTHS[key], Math.round(numericWidth)));
+  const maxWidth = REALTIME_LOG_COLUMN_MAX_WIDTHS[key] ?? REALTIME_LOG_COLUMN_MAX_WIDTH;
+  return Math.min(maxWidth, Math.max(REALTIME_LOG_COLUMN_MIN_WIDTHS[key], Math.round(numericWidth)));
 };
 
 const normalizeRealtimeLogColumnWidth = (key: RealtimeLogColumnKey, width: unknown) => (
@@ -205,6 +246,15 @@ const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPreferenc
     value.forEach((item) => {
       if (!item || typeof item !== 'object') return;
       const key = (item as { key?: unknown }).key;
+      if (key === 'usage') {
+        const visible = (item as { visible?: unknown }).visible !== false;
+        (['tokens', 'cacheRead'] as const).forEach((replacementKey) => {
+          if (seen.has(replacementKey)) return;
+          next.push({ key: replacementKey, visible });
+          seen.add(replacementKey);
+        });
+        return;
+      }
       if (!isRealtimeLogColumnKey(key) || seen.has(key)) return;
       next.push({
         key,
@@ -215,13 +265,38 @@ const normalizeRealtimeLogColumns = (value: unknown): RealtimeLogColumnPreferenc
     });
   }
 
+  const shouldMigrateReasoningEffort = next.length > 0 && !seen.has('reasoningEffort');
+  const shouldMigrateStream = next.length > 0 && !seen.has('stream');
+
   REALTIME_LOG_DEFAULT_COLUMNS.forEach((item) => {
     if (!seen.has(item.key)) {
       next.push({ ...item });
     }
   });
 
-  return next.some((item) => item.visible) ? next : createDefaultRealtimeLogColumns();
+  if (shouldMigrateReasoningEffort) {
+    const reasoningEffortIndex = next.findIndex((item) => item.key === 'reasoningEffort');
+    const modelIndex = next.findIndex((item) => item.key === 'model');
+    if (reasoningEffortIndex >= 0 && modelIndex >= 0) {
+      const [reasoningEffortColumn] = next.splice(reasoningEffortIndex, 1);
+      const migratedModelIndex = next.findIndex((item) => item.key === 'model');
+      next.splice(migratedModelIndex + 1, 0, reasoningEffortColumn);
+    }
+  }
+
+  if (shouldMigrateStream) {
+    const streamIndex = next.findIndex((item) => item.key === 'stream');
+    const reasoningEffortIndex = next.findIndex((item) => item.key === 'reasoningEffort');
+    if (streamIndex >= 0 && reasoningEffortIndex >= 0) {
+      const [streamColumn] = next.splice(streamIndex, 1);
+      const migratedReasoningEffortIndex = next.findIndex((item) => item.key === 'reasoningEffort');
+      next.splice(migratedReasoningEffortIndex + 1, 0, streamColumn);
+    }
+  }
+
+  const timeColumn = next.find((item) => item.key === 'time');
+  const ordered = timeColumn ? [...next.filter((item) => item.key !== 'time'), timeColumn] : next;
+  return ordered.some((item) => item.visible) ? ordered : createDefaultRealtimeLogColumns();
 };
 
 const loadRealtimeLogColumns = () => {
@@ -250,6 +325,10 @@ const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: Realti
       return [row.provider, row.account || row.authLabel || row.accountMasked || '-'];
     case 'model':
       return [row.model, row.modelAlias && row.modelAlias !== row.model ? row.modelAlias : buildRealtimeMetaText(row)];
+    case 'reasoningEffort':
+      return [row.reasoningEffort.trim() || '-'];
+    case 'stream':
+      return [row.stream ? 'Streaming' : 'Non-streaming'];
     case 'apiKey':
       return [row.clientApiKey.masked];
     case 'recent':
@@ -264,16 +343,21 @@ const getRealtimeLogColumnContentTexts = (key: RealtimeLogColumnKey, row: Realti
       return [formatDurationMs(row.ttftMs)];
     case 'latency':
       return [formatDurationMs(row.latencyMs)];
-    case 'time':
-      return [new Date(row.timestampMs).toLocaleString()];
-    case 'usage':
+    case 'tokens':
       return [
-        formatCompactNumber(row.totalTokens),
-        `I ${formatCompactNumber(row.inputTokens)} O ${formatCompactNumber(row.outputTokens)}`,
-        `R ${formatCompactNumber(row.reasoningTokens)} C ${formatCompactNumber(row.cachedTokens)}`,
+        formatTokenCount(row.totalTokens),
+        `I ${formatTokenCount(row.inputTokens)} O ${formatTokenCount(row.outputTokens)}`,
+        row.reasoningTokens > 0 ? `R ${formatTokenCount(row.reasoningTokens)}` : '',
+      ];
+    case 'cacheRead':
+      return [
+        formatTokenCount(row.cachedTokens),
+        row.inputTokens > 0 ? formatPercent(Math.min(row.cachedTokens / row.inputTokens, 1)) : '--',
       ];
     case 'cost':
-      return [formatUsd(row.totalCost)];
+      return [formatUsdPrecise(row.totalCost)];
+    case 'time':
+      return [new Date(row.timestampMs).toLocaleString()];
     default:
       return [];
   }
@@ -289,8 +373,8 @@ const estimateRealtimeLogColumnWidth = (
       .reduce((innerMax, text) => Math.max(innerMax, text.length), 0);
     return Math.max(maxLength, rowMaxLength);
   }, label.length);
-  const characterWidth = key === 'recent' ? 6 : key === 'usage' ? 8 : 7;
-  const padding = key === 'status' ? 36 : key === 'usage' ? 34 : 28;
+  const characterWidth = key === 'recent' ? 6 : key === 'tokens' || key === 'cacheRead' ? 8 : 7;
+  const padding = key === 'status' ? 36 : key === 'tokens' || key === 'cacheRead' ? 34 : 28;
   return clampRealtimeLogColumnWidth(key, maxTextLength * characterWidth + padding);
 };
 
@@ -494,22 +578,47 @@ type AccountStatusData = {
   totalFailure: number;
 };
 
+type PriceTierDraft = {
+	contextSize: string;
+	input: string;
+	output: string;
+	cacheRead: string;
+	cacheWrite: string;
+};
+
 type PriceDraft = {
-  prompt: string;
-  completion: string;
-  cache: string;
+  input: string;
+  output: string;
+  cacheRead: string;
+  cacheWrite: string;
+  tiers: PriceTierDraft[];
+};
+
+type PriceManagementView = 'rules' | 'sync';
+type PriceSyncChangeFilter = 'all' | ModelPriceSyncChangeAction;
+
+type PriceRuleTarget = {
+  key: string;
+  model: string;
+  requests: number;
+  lastSeenAtMs: number;
+  rule?: ModelPriceRule;
 };
 
 type MonitoringSettings = {
   retentionDays: number;
-  webdav: {
+	webdav: {
     enabled: boolean;
     intervalMinutes: number;
     retentionDays: number;
     url: string;
     username: string;
     password: string;
-  };
+	};
+	modelPriceSync: {
+		enabled: boolean;
+		intervalMinutes: number;
+	};
 };
 
 type MonitoringSettingsDraft = {
@@ -519,7 +628,9 @@ type MonitoringSettingsDraft = {
   webdavRetentionDays: string;
   webdavUrl: string;
   webdavUsername: string;
-  webdavPassword: string;
+	webdavPassword: string;
+	modelPriceSyncEnabled: boolean;
+	modelPriceSyncIntervalMinutes: string;
 };
 
 type RealtimeLogRow = MonitoringEventRow & {
@@ -533,6 +644,136 @@ type RealtimeLogRow = MonitoringEventRow & {
   recentSuccessCount: number;
   recentFailureCount: number;
 };
+
+type RealtimeCostTooltipPosition = {
+  top: number;
+  left: number;
+  arrowTop: number;
+  placement: 'left' | 'right';
+};
+
+const REALTIME_COST_TOOLTIP_WIDTH = 336;
+const REALTIME_COST_TOOLTIP_MARGIN = 12;
+
+const formatCostTierLabel = (value: string) => value
+  .trim()
+  .replace(/[-_]+/g, ' ')
+  .replace(/\b\w/g, (character) => character.toUpperCase());
+
+const calculateMillionTokenRate = (cost: number, tokens: number): number | null => (
+  tokens > 0 ? (cost / tokens) * 1_000_000 : null
+);
+
+const formatMillionTokenRate = (rate: number | null) => rate === null
+  ? '--'
+  : `$${rate.toLocaleString(undefined, { minimumFractionDigits: 4, maximumFractionDigits: 4 })} / 1M Token`;
+
+function RealtimeCostCell({ row, hasPrices, t }: { row: RealtimeLogRow; hasPrices: boolean; t: TFunction }) {
+  const cellRef = useRef<HTMLSpanElement>(null);
+  const tooltipId = useId();
+  const [tooltipPosition, setTooltipPosition] = useState<RealtimeCostTooltipPosition | null>(null);
+  const breakdown = row.costBreakdown;
+
+  const showTooltip = useCallback((element: HTMLElement | null) => {
+    if (!element || typeof window === 'undefined') return;
+    const rect = element.getBoundingClientRect();
+    const detailRowCount = breakdown
+      ? 6 + [breakdown.cacheReadTokens, breakdown.cacheWriteTokens, breakdown.reasoningTokens].filter((tokens) => tokens > 0).length
+      : 1;
+    const estimatedHeight = Math.min(420, 70 + detailRowCount * 31);
+    const placement = rect.left >= REALTIME_COST_TOOLTIP_WIDTH + REALTIME_COST_TOOLTIP_MARGIN * 2 ? 'left' : 'right';
+    const unclampedLeft = placement === 'left'
+      ? rect.left - REALTIME_COST_TOOLTIP_WIDTH - REALTIME_COST_TOOLTIP_MARGIN
+      : rect.right + REALTIME_COST_TOOLTIP_MARGIN;
+    const left = Math.min(
+      Math.max(REALTIME_COST_TOOLTIP_MARGIN, unclampedLeft),
+      Math.max(REALTIME_COST_TOOLTIP_MARGIN, window.innerWidth - REALTIME_COST_TOOLTIP_WIDTH - REALTIME_COST_TOOLTIP_MARGIN)
+    );
+    const centerY = rect.top + rect.height / 2;
+    const top = Math.min(
+      Math.max(REALTIME_COST_TOOLTIP_MARGIN, centerY - estimatedHeight / 2),
+      Math.max(REALTIME_COST_TOOLTIP_MARGIN, window.innerHeight - estimatedHeight - REALTIME_COST_TOOLTIP_MARGIN)
+    );
+    setTooltipPosition({
+      top,
+      left,
+      placement,
+      arrowTop: Math.min(Math.max(22, centerY - top), estimatedHeight - 22),
+    });
+  }, [breakdown]);
+
+  const hideTooltip = useCallback(() => setTooltipPosition(null), []);
+
+  if (!hasPrices && !breakdown) return <span>--</span>;
+
+  const conditionalCosts = breakdown ? [
+    { key: 'cache-read', tokens: breakdown.cacheReadTokens, label: t('monitoring.cost_detail_cache_read'), cost: breakdown.cacheReadCost },
+    { key: 'cache-write', tokens: breakdown.cacheWriteTokens, label: t('monitoring.cost_detail_cache_write'), cost: breakdown.cacheWriteCost },
+    { key: 'reasoning', tokens: breakdown.reasoningTokens, label: t('monitoring.cost_detail_reasoning'), cost: breakdown.reasoningCost },
+  ].filter((item) => item.tokens > 0 || item.cost > 0) : [];
+  const actualTier = breakdown?.serviceTier || row.serviceTier;
+  const actualTierLabel = actualTier
+    ? formatCostTierLabel(actualTier)
+    : t('monitoring.cost_detail_standard');
+  const billingMode = breakdown?.serviceTier
+    ? t('monitoring.cost_detail_service_tier_mode')
+    : breakdown && breakdown.contextTierSize > 0
+      ? t('monitoring.cost_detail_context_mode', { size: formatCompactNumber(breakdown.contextTierSize) })
+      : t('monitoring.cost_detail_standard');
+
+  return (
+    <span
+      ref={cellRef}
+      className={styles.realtimeCostCell}
+      onMouseEnter={() => showTooltip(cellRef.current)}
+      onMouseLeave={hideTooltip}
+    >
+      <span className={styles.realtimeCostValue}>{formatUsdPrecise(row.totalCost)}</span>
+      <button
+        type="button"
+        className={styles.realtimeCostInfoButton}
+        aria-label={t('monitoring.cost_detail_open')}
+        aria-describedby={tooltipPosition ? tooltipId : undefined}
+        onFocus={(event) => showTooltip(event.currentTarget)}
+        onBlur={hideTooltip}
+      >
+        <IconInfo size={16} />
+      </button>
+      {tooltipPosition && typeof document !== 'undefined' ? createPortal(
+        <div
+          id={tooltipId}
+          role="tooltip"
+          className={styles.realtimeCostTooltip}
+          data-placement={tooltipPosition.placement}
+          style={{
+            top: tooltipPosition.top,
+            left: tooltipPosition.left,
+            '--realtime-cost-arrow-top': `${tooltipPosition.arrowTop}px`,
+          } as CSSProperties}
+        >
+          <strong className={styles.realtimeCostTooltipTitle}>{t('monitoring.cost_detail_title')}</strong>
+          {breakdown ? (
+            <div className={styles.realtimeCostTooltipRows}>
+              <div><span>{t('monitoring.cost_detail_input')}</span><strong>{formatUsdPrecise(breakdown.inputCost)}</strong></div>
+              <div><span>{t('monitoring.cost_detail_output')}</span><strong>{formatUsdPrecise(breakdown.outputCost)}</strong></div>
+              {conditionalCosts.map((item) => (
+                <div key={item.key}><span>{item.label}</span><strong>{formatUsdPrecise(item.cost)}</strong></div>
+              ))}
+              <div className={styles.realtimeCostTooltipDivider} aria-hidden="true" />
+              <div><span>{t('monitoring.cost_detail_input_rate')}</span><strong className={styles.realtimeCostRateInput}>{formatMillionTokenRate(calculateMillionTokenRate(breakdown.inputCost, breakdown.inputTokens))}</strong></div>
+              <div><span>{t('monitoring.cost_detail_output_rate')}</span><strong className={styles.realtimeCostRateOutput}>{formatMillionTokenRate(calculateMillionTokenRate(breakdown.outputCost, breakdown.outputTokens))}</strong></div>
+              <div><span>{t('monitoring.cost_detail_actual_tier')}</span><strong>{actualTierLabel}</strong></div>
+              <div><span>{t('monitoring.cost_detail_billing_mode')}</span><strong>{billingMode}</strong></div>
+            </div>
+          ) : (
+            <p className={styles.realtimeCostTooltipEmpty}>{t('monitoring.cost_detail_unavailable')}</p>
+          )}
+        </div>,
+        document.body
+      ) : null}
+    </span>
+  );
+}
 
 type MonitoringSummaryAccumulator = {
   totalCalls: number;
@@ -647,13 +888,22 @@ type UsageImportResult = {
   total?: number;
   failed?: number;
   modelPrices?: number;
-  modelPriceRecords?: number;
+	modelPriceRecords?: number;
+	modelPriceRules?: number;
   quotaCache?: number;
   quotaCacheRecords?: number;
   accountInspectionSchedule?: boolean;
   accountInspectionScheduleRecords?: number;
+  accountInspectionSnapshot?: boolean;
+  accountInspectionSnapshotRecords?: number;
   monitoringSettings?: boolean;
   monitoringSettingsRecords?: number;
+};
+
+type UsageResetResult = {
+  deletedEvents: number;
+  generation: number;
+  resetAtMs: number;
 };
 
 const createMonitoringSettingsDraft = (settings?: MonitoringSettings): MonitoringSettingsDraft => ({
@@ -663,7 +913,9 @@ const createMonitoringSettingsDraft = (settings?: MonitoringSettings): Monitorin
   webdavRetentionDays: String(settings?.webdav.retentionDays ?? 0),
   webdavUrl: settings?.webdav.url ?? '',
   webdavUsername: settings?.webdav.username ?? '',
-  webdavPassword: settings?.webdav.password ?? '',
+	webdavPassword: settings?.webdav.password ?? '',
+	modelPriceSyncEnabled: settings?.modelPriceSync?.enabled ?? false,
+	modelPriceSyncIntervalMinutes: String(settings?.modelPriceSync?.intervalMinutes ?? 1440),
 });
 
 const parseNonNegativeInteger = (value: string) => {
@@ -684,8 +936,12 @@ const buildMonitoringSettingsFromDraft = (draft: MonitoringSettingsDraft): Monit
     retentionDays: parseNonNegativeInteger(draft.webdavRetentionDays),
     url: draft.webdavUrl.trim(),
     username: draft.webdavUsername.trim(),
-    password: draft.webdavPassword,
-  },
+		password: draft.webdavPassword,
+	},
+	modelPriceSync: {
+		enabled: draft.modelPriceSyncEnabled,
+		intervalMinutes: parsePositiveInteger(draft.modelPriceSyncIntervalMinutes, 1440),
+	},
 });
 
 
@@ -844,7 +1100,37 @@ const buildAccountSummaryMetrics = (
   },
 ];
 
-type AnyQuotaConfig = QuotaConfig<any, any>;
+type AnyQuotaConfig = {
+  type: QuotaConfig<QuotaStatusState, unknown>['type'];
+  i18nPrefix: string;
+  fetchQuota: (file: AuthFileItem, t: TFunction) => Promise<unknown>;
+  storeSelector: (state: QuotaStore) => Record<string, QuotaStatusState>;
+  storeSetter: keyof QuotaStore;
+  buildLoadingState: () => QuotaStatusState;
+  buildSuccessState: (data: unknown) => QuotaStatusState;
+  buildErrorState: (message: string, status?: number) => QuotaStatusState;
+  renderQuotaItems: (quota: QuotaStatusState, t: TFunction, helpers: QuotaRenderHelpers) => ReactNode;
+};
+
+const adaptQuotaConfig = <TState extends QuotaStatusState, TData>(
+  config: QuotaConfig<TState, TData>
+): AnyQuotaConfig => ({
+  type: config.type,
+  i18nPrefix: config.i18nPrefix,
+  fetchQuota: config.fetchQuota,
+  storeSelector: config.storeSelector,
+  storeSetter: config.storeSetter,
+  buildLoadingState: config.buildLoadingState,
+  buildSuccessState: (data) => config.buildSuccessState(data as TData),
+  buildErrorState: config.buildErrorState,
+  renderQuotaItems: (quota, t, helpers) => config.renderQuotaItems(quota as TState, t, helpers),
+});
+
+const ACCOUNT_ANTIGRAVITY_QUOTA_CONFIG = adaptQuotaConfig(ANTIGRAVITY_CONFIG);
+const ACCOUNT_CLAUDE_QUOTA_CONFIG = adaptQuotaConfig(CLAUDE_CONFIG);
+const ACCOUNT_CODEX_QUOTA_CONFIG = adaptQuotaConfig(CODEX_CONFIG);
+const ACCOUNT_KIMI_QUOTA_CONFIG = adaptQuotaConfig(KIMI_CONFIG);
+const ACCOUNT_XAI_QUOTA_CONFIG = adaptQuotaConfig(XAI_CONFIG);
 
 type AccountQuotaTarget = {
   key: string;
@@ -1161,10 +1447,12 @@ const buildUsageTrendAnalytics = (
 };
 
 const calculateAggregateCost = (
-  item: Pick<UsageAggregateBucket, 'model' | 'inputTokens' | 'outputTokens' | 'cacheTokens'>,
-  modelPrices: Record<string, ModelPrice>
-) => calculateCost({
-  __modelName: item.model || '',
+	 item: Pick<UsageAggregateBucket, 'model' | 'inputTokens' | 'outputTokens' | 'cacheTokens' | 'estimatedCost'>,
+	 modelPrices: Record<string, ModelPrice>
+) => Number.isFinite(Number(item.estimatedCost)) && Number(item.estimatedCost) >= 0
+	 ? Number(item.estimatedCost)
+	 : calculateCost({
+	 __modelName: item.model || '',
   tokens: {
     input_tokens: item.inputTokens,
     output_tokens: item.outputTokens,
@@ -1519,10 +1807,18 @@ const formatDeltaPercent = (current: number, previous: number) => {
   return `${delta >= 0 ? '+' : ''}${(delta * 100).toFixed(1)}%`;
 };
 
-const createPriceDraft = (price?: ModelPrice): PriceDraft => ({
-  prompt: price ? String(price.prompt) : '',
-  completion: price ? String(price.completion) : '',
-  cache: price ? String(price.cache) : '',
+const createPriceDraft = (rule?: ModelPriceRule): PriceDraft => ({
+	input: rule ? String(rule.base.input) : '',
+	output: rule ? String(rule.base.output) : '',
+	cacheRead: rule ? String(rule.base.cacheRead) : '',
+	cacheWrite: rule ? String(rule.base.cacheWrite) : '',
+	tiers: rule?.tiers?.map((tier) => ({
+		contextSize: String(tier.contextSize),
+		input: String(tier.input),
+		output: String(tier.output),
+		cacheRead: String(tier.cacheRead),
+		cacheWrite: String(tier.cacheWrite),
+	})) ?? [],
 });
 
 const parsePriceValue = (value: string) => {
@@ -1530,7 +1826,17 @@ const parsePriceValue = (value: string) => {
   return Number.isFinite(parsed) && parsed >= 0 ? parsed : 0;
 };
 
-const formatPriceUnit = (value: number) => `$${value.toFixed(4)}/1M`;
+const formatModelPriceRate = (value: number | undefined) => {
+  const normalized = Number(value) || 0;
+  return `$${normalized.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 6 })}`;
+};
+
+const MODEL_PRICE_SYNC_RATE_FIELDS = [
+  ['input', 'usage_stats.model_price_input'],
+  ['output', 'usage_stats.model_price_output'],
+  ['cacheRead', 'usage_stats.model_price_cache_read'],
+  ['cacheWrite', 'usage_stats.model_price_cache_write'],
+] as const;
 
 const buildRealtimeMetaText = (row: MonitoringEventRow) => {
   const parts = [`${row.endpointMethod} ${row.endpointPath}`.trim()];
@@ -1796,11 +2102,11 @@ const getQuotaProviderLabel = (config: AnyQuotaConfig, t: TFunction) => {
 };
 
 const getAccountQuotaConfig = (file: AuthFileItem): AnyQuotaConfig | undefined => {
-  if (isAntigravityFile(file)) return ANTIGRAVITY_CONFIG;
-  if (isClaudeFile(file)) return CLAUDE_CONFIG;
-  if (isCodexFile(file)) return CODEX_CONFIG;
-  if (isKimiFile(file)) return KIMI_CONFIG;
-  if (isXaiFile(file)) return XAI_CONFIG;
+  if (isAntigravityFile(file)) return ACCOUNT_ANTIGRAVITY_QUOTA_CONFIG;
+  if (isClaudeFile(file)) return ACCOUNT_CLAUDE_QUOTA_CONFIG;
+  if (isCodexFile(file)) return ACCOUNT_CODEX_QUOTA_CONFIG;
+  if (isKimiFile(file)) return ACCOUNT_KIMI_QUOTA_CONFIG;
+  if (isXaiFile(file)) return ACCOUNT_XAI_QUOTA_CONFIG;
   return undefined;
 };
 
@@ -3532,6 +3838,7 @@ export function MonitoringCenterPage() {
   const config = useConfigStore((state) => state.config);
   const connectionStatus = useAuthStore((state) => state.connectionStatus);
   const showNotification = useNotificationStore((state) => state.showNotification);
+  const showConfirmation = useNotificationStore((state) => state.showConfirmation);
   const quotaStore = useQuotaStore((state) => state);
   const [timeRange, setTimeRange] = useState<MonitoringTimeRange>('today');
   const [searchInput, setSearchInput] = useState('');
@@ -3545,9 +3852,21 @@ export function MonitoringCenterPage() {
   const [isMonitoringSettingsOpen, setIsMonitoringSettingsOpen] = useState(false);
   const [isMonitoringSettingsLoading, setIsMonitoringSettingsLoading] = useState(false);
   const [isMonitoringSettingsSaving, setIsMonitoringSettingsSaving] = useState(false);
+  const [isMonitoringStatisticsResetting, setIsMonitoringStatisticsResetting] = useState(false);
   const [monitoringSettingsDraft, setMonitoringSettingsDraft] = useState<MonitoringSettingsDraft>(() => createMonitoringSettingsDraft());
+  const [priceManagementView, setPriceManagementView] = useState<PriceManagementView>('rules');
+  const [priceRuleSearch, setPriceRuleSearch] = useState('');
+  const [priceSyncChangeFilter, setPriceSyncChangeFilter] = useState<PriceSyncChangeFilter>('all');
+  const [priceSyncLockedOverrides, setPriceSyncLockedOverrides] = useState<string[]>([]);
   const [priceModel, setPriceModel] = useState('');
   const [priceDraft, setPriceDraft] = useState<PriceDraft>(() => createPriceDraft());
+  const [priceRules, setPriceRules] = useState<ModelPriceRule[]>([]);
+  const [observedPriceModels, setObservedPriceModels] = useState<ObservedModelPriceTarget[]>([]);
+  const [priceSyncState, setPriceSyncState] = useState<ModelPriceSyncState>({ status: 'idle' });
+  const [priceSyncResult, setPriceSyncResult] = useState<ModelPriceSyncResult | null>(null);
+  const [isPriceLoading, setIsPriceLoading] = useState(false);
+  const [isPriceSaving, setIsPriceSaving] = useState(false);
+  const [isPriceSyncing, setIsPriceSyncing] = useState(false);
   const [isImportingUsage, setIsImportingUsage] = useState(false);
   const importInputRef = useRef<HTMLInputElement | null>(null);
   const [accountQuotaStates, setAccountQuotaStates] = useState<Record<string, AccountQuotaState>>({});
@@ -3571,6 +3890,7 @@ export function MonitoringCenterPage() {
   const accountQuotaStatesRef = useRef<Record<string, AccountQuotaState>>({});
   const accountQuotaRequestIdsRef = useRef<Record<string, number>>({});
   const realtimeColumnsMenuRef = useRef<HTMLDivElement | null>(null);
+  const usageGenerationRef = useRef(0);
   const deferredSearchInput = useDeferredValue(searchInput);
   const [deferredSearch, setDeferredSearch] = useState(searchInput);
 
@@ -3582,10 +3902,9 @@ export function MonitoringCenterPage() {
   const {
     usage,
     error: usageError,
-    latestId,
-    modelPrices,
-    setModelPrices,
-    refreshUsage,
+		latestId,
+		modelPrices,
+		refreshUsage,
     loadEventPage,
   } = useUsageData();
   const deferredUsage = useDeferredValue(usage);
@@ -3721,6 +4040,12 @@ export function MonitoringCenterPage() {
     await refreshAggregates();
   }, [refreshAggregates, refreshMeta, refreshRealtimeLogs, refreshUsage]);
 
+  const fetchMonitoringSettings = useCallback(async () => {
+    const response = await apiClient.get<{ settings: MonitoringSettings }>('/usage/settings');
+    setMonitoringSettingsDraft(createMonitoringSettingsDraft(response.settings));
+    return response.settings;
+  }, []);
+
   const loadMonitoringSettings = useCallback(async () => {
     if (connectionStatus !== 'connected') {
       showNotification(t('notification.connection_required'), 'warning');
@@ -3728,17 +4053,16 @@ export function MonitoringCenterPage() {
     }
     setIsMonitoringSettingsLoading(true);
     try {
-      const response = await apiClient.get<{ settings: MonitoringSettings }>('/usage/settings');
-      setMonitoringSettingsDraft(createMonitoringSettingsDraft(response.settings));
+      await fetchMonitoringSettings();
       setIsMonitoringSettingsOpen(true);
     } catch (error) {
       showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
     } finally {
       setIsMonitoringSettingsLoading(false);
     }
-  }, [connectionStatus, showNotification, t]);
+  }, [connectionStatus, fetchMonitoringSettings, showNotification, t]);
 
-  const handleSaveMonitoringSettings = useCallback(async () => {
+  const handleSaveMonitoringSettings = useCallback(async (closeModal = true) => {
     const settings = buildMonitoringSettingsFromDraft(monitoringSettingsDraft);
     if (settings.webdav.enabled && !settings.webdav.url) {
       showNotification(t('usage_stats.monitoring_settings_webdav_url_required'), 'warning');
@@ -3748,7 +4072,7 @@ export function MonitoringCenterPage() {
     try {
       const response = await apiClient.put<{ settings: MonitoringSettings }>('/usage/settings', { settings });
       setMonitoringSettingsDraft(createMonitoringSettingsDraft(response.settings));
-      setIsMonitoringSettingsOpen(false);
+      if (closeModal) setIsMonitoringSettingsOpen(false);
       showNotification(t('usage_stats.monitoring_settings_saved'), 'success');
       await refreshAll();
     } catch (error) {
@@ -3757,6 +4081,40 @@ export function MonitoringCenterPage() {
       setIsMonitoringSettingsSaving(false);
     }
   }, [monitoringSettingsDraft, refreshAll, showNotification, t]);
+
+  const executeMonitoringStatisticsReset = useCallback(async () => {
+    setIsMonitoringStatisticsResetting(true);
+    try {
+      const result = await apiClient.post<UsageResetResult>('/usage/reset', { confirm: true });
+      setSelectedRealtimeErrorRow(null);
+      setRealtimeLogUsage(null);
+      setRealtimeLogMatchedTotal(0);
+      setRealtimeLogPageCursors(['']);
+      await Promise.all([refreshUsage(), refreshRealtimeLogs(), refreshAggregates()]);
+      showNotification(t('usage_stats.monitoring_settings_reset_success', { count: result.deletedEvents }), 'success');
+    } catch (error) {
+      showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
+    } finally {
+      setIsMonitoringStatisticsResetting(false);
+    }
+  }, [refreshAggregates, refreshRealtimeLogs, refreshUsage, showNotification, t]);
+
+  const handleMonitoringStatisticsReset = useCallback(() => {
+    if (connectionStatus !== 'connected') {
+      showNotification(t('notification.connection_required'), 'warning');
+      return;
+    }
+    showConfirmation({
+      title: t('usage_stats.monitoring_settings_reset_confirm_title'),
+      message: t('usage_stats.monitoring_settings_reset_confirm_message', {
+        count: Number(usage?.total_requests) || 0,
+      }),
+      confirmText: t('usage_stats.monitoring_settings_reset_confirm_button'),
+      cancelText: t('common.cancel'),
+      variant: 'danger',
+      onConfirm: executeMonitoringStatisticsReset,
+    });
+  }, [connectionStatus, executeMonitoringStatisticsReset, showConfirmation, showNotification, t, usage?.total_requests]);
   const handleExportUsage = useCallback(async () => {
     if (connectionStatus !== 'connected') {
       showNotification(t('notification.connection_required'), 'warning');
@@ -3807,9 +4165,10 @@ export function MonitoringCenterPage() {
           headers: { 'Content-Type': 'application/x-ndjson' },
         });
         const importedExtras = [
-          (result.modelPriceRecords ?? 0) > 0 ? t('usage_stats.import_model_prices_restored', { count: result.modelPrices ?? 0 }) : '',
+		  (result.modelPriceRecords ?? 0) > 0 ? t('usage_stats.import_model_prices_restored', { count: Math.max(result.modelPrices ?? 0, result.modelPriceRules ?? 0) }) : '',
           (result.quotaCacheRecords ?? 0) > 0 ? t('usage_stats.import_quota_cache_restored', { count: result.quotaCache ?? 0 }) : '',
           result.accountInspectionSchedule ? t('usage_stats.import_account_inspection_schedule_restored') : '',
+          result.accountInspectionSnapshot ? t('usage_stats.import_account_inspection_snapshot_restored') : '',
           result.monitoringSettings ? t('usage_stats.import_monitoring_settings_restored') : '',
         ].filter(Boolean).join(' · ');
         showNotification(
@@ -3850,6 +4209,19 @@ export function MonitoringCenterPage() {
   const combinedError = [usageError, monitoringError, realtimeLogError].filter(Boolean).join('；');
   const hasPrices = Object.keys(modelPrices).length > 0;
   const pendingRealtimeEventCount = realtimeLogSnapshotMaxId > 0 ? Math.max(latestId - realtimeLogSnapshotMaxId, 0) : 0;
+
+  useEffect(() => {
+    const nextGeneration = Number(usage?.generation) || 0;
+    const previousGeneration = usageGenerationRef.current;
+    usageGenerationRef.current = nextGeneration;
+    if (previousGeneration <= 0 || nextGeneration <= 0 || previousGeneration === nextGeneration) return;
+    setSelectedRealtimeErrorRow(null);
+    setRealtimeLogUsage(null);
+    setRealtimeLogMatchedTotal(0);
+    setRealtimeLogPageCursors(['']);
+    void refreshAggregates();
+    void refreshRealtimeLogs();
+  }, [refreshAggregates, refreshRealtimeLogs, usage?.generation]);
 
   useEffect(() => {
     realtimeLogPageRef.current = realtimeLogPage;
@@ -3938,20 +4310,12 @@ export function MonitoringCenterPage() {
           .sort((left, right) => left[1].localeCompare(right[1]))
           .map(([value, label]) => ({ value, label })),
       ],
-      priceModelOptions: [
-        { value: '', label: t('usage_stats.model_price_select_placeholder') },
-        ...Array.from(new Set([...sortedModels, ...Object.keys(modelPrices)]))
-          .filter(Boolean)
-          .sort((left, right) => left.localeCompare(right))
-          .map((value) => ({ value, label: value })),
-      ],
     };
-  }, [allRows, modelPrices, t, usageAggregates]);
+  }, [allRows, t, usageAggregates]);
   const {
     providerOptions,
     modelOptions,
     apiKeyOptions,
-    priceModelOptions,
   } = requestLogDerived;
 
   const statusOptions = useMemo(
@@ -3993,7 +4357,10 @@ export function MonitoringCenterPage() {
   const scopedFailureCount = scopedRowsState.failureCount;
 
   const usageRowGroups = useMemo(() => {
-    const nowMs = Date.now();
+    const nowMs = Math.max(
+      Number(usageAggregates?.snapshotAtMs) || 0,
+      allRows.reduce((latest, row) => Math.max(latest, row.timestampMs), 0)
+    );
     const summaryWindowStartMs = nowMs - 30 * 60 * 1000;
     const todayStart = new Date(nowMs);
     todayStart.setHours(0, 0, 0, 0);
@@ -4032,7 +4399,7 @@ export function MonitoringCenterPage() {
       todayCost,
       yesterdayCost,
     };
-  }, [allRows, timeRange]);
+  }, [allRows, timeRange, usageAggregates?.snapshotAtMs]);
   const {
     trendStatsRows,
     topSummary,
@@ -4207,6 +4574,39 @@ export function MonitoringCenterPage() {
         </div>
       ),
     },
+    reasoningEffort: {
+      key: 'reasoningEffort',
+      label: t('monitoring.column_reasoning_effort'),
+      colClassName: styles.realtimeReasoningCol,
+      headerClassName: styles.realtimeCenterHeader,
+      cellClassName: () => `${styles.realtimeCenterCell} ${styles.realtimeNowrapCell}`,
+      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.reasoningEffort,
+      render: (row) => {
+        const reasoningEffort = row.reasoningEffort.trim();
+        return reasoningEffort ? (
+          <span className={`${styles.realtimeReasoningBadge} ${styles.monoCell}`} title={reasoningEffort}>
+            <StatusBadge tone="good">{reasoningEffort}</StatusBadge>
+          </span>
+        ) : (
+          <span className={styles.mutedText}>-</span>
+        );
+      },
+    },
+    stream: {
+      key: 'stream',
+      label: t('monitoring.column_stream'),
+      colClassName: styles.realtimeStreamCol,
+      headerClassName: styles.realtimeCenterHeader,
+      cellClassName: () => `${styles.realtimeCenterCell} ${styles.realtimeNowrapCell}`,
+      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.stream,
+      render: (row) => (
+        <span className={`${styles.realtimeReasoningBadge} ${row.stream ? '' : styles.realtimeNonStreamingBadge}`}>
+          <StatusBadge tone="good">
+            {t(row.stream ? 'monitoring.stream_mode_streaming' : 'monitoring.stream_mode_non_streaming')}
+          </StatusBadge>
+        </span>
+      ),
+    },
     apiKey: {
       key: 'apiKey',
       label: t('monitoring.api_key_label'),
@@ -4218,7 +4618,8 @@ export function MonitoringCenterPage() {
       key: 'recent',
       label: t('monitoring.recent_status'),
       colClassName: styles.realtimeRecentCol,
-      cellClassName: () => styles.realtimeNowrapCell,
+      headerClassName: styles.realtimeCenterHeader,
+      cellClassName: () => `${styles.realtimeCenterCell} ${styles.realtimeNowrapCell}`,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.recent,
       render: (row) => (
         <div className={styles.recentStatusCell}>
@@ -4238,6 +4639,8 @@ export function MonitoringCenterPage() {
       key: 'status',
       label: t('monitoring.request_status'),
       colClassName: styles.realtimeStatusCol,
+      headerClassName: styles.realtimeCenterHeader,
+      cellClassName: () => styles.realtimeCenterCell,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.status,
       render: (row) => (
         <div className={styles.primaryCell}>
@@ -4317,31 +4720,43 @@ export function MonitoringCenterPage() {
         </span>
       ),
     },
-    time: {
-      key: 'time',
-      label: t('monitoring.column_time'),
-      colClassName: styles.realtimeTimeCol,
-      cellClassName: () => styles.realtimeTimeCell,
-      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.time,
-      render: (row) => new Date(row.timestampMs).toLocaleString(i18n.language),
-    },
-    usage: {
-      key: 'usage',
-      label: t('monitoring.this_call_usage'),
+    tokens: {
+      key: 'tokens',
+      label: t('monitoring.realtime_tokens_column'),
       colClassName: styles.realtimeUsageCol,
-      cellClassName: () => styles.realtimeUsageTableCell,
-      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.usage,
+      cellClassName: () => styles.realtimeTokensTableCell,
+      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.tokens,
       render: (row) => (
-        <div className={`${styles.primaryCell} ${styles.realtimeUsageCell}`}>
-          <span>{formatCompactNumber(row.totalTokens)}</span>
-          <small className={styles.realtimeUsageBreakdown}>
-            <span><b>I</b><span>{formatCompactNumber(row.inputTokens)}</span></span>
-            <span><b>O</b><span>{formatCompactNumber(row.outputTokens)}</span></span>
-            <span><b>R</b><span>{formatCompactNumber(row.reasoningTokens)}</span></span>
-            <span><b>C</b><span>{formatCompactNumber(row.cachedTokens)}</span></span>
+        <div className={`${styles.primaryCell} ${styles.realtimeTokenCell}`}>
+          <span>{t('monitoring.realtime_tokens_total')}: <strong>{formatTokenCount(row.totalTokens)}</strong></span>
+          <small>
+            {t('monitoring.realtime_tokens_input')}: {formatTokenCount(row.inputTokens)}
+            {' | '}
+            {t('monitoring.realtime_tokens_output')}: {formatTokenCount(row.outputTokens)}
           </small>
+          {row.reasoningTokens > 0 ? (
+            <small>{t('monitoring.realtime_tokens_reasoning')}: {formatTokenCount(row.reasoningTokens)}</small>
+          ) : null}
         </div>
       ),
+    },
+    cacheRead: {
+      key: 'cacheRead',
+      label: t('monitoring.realtime_cache_read_column'),
+      colClassName: styles.realtimeCacheReadCol,
+      cellClassName: () => styles.realtimeCacheReadTableCell,
+      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.cacheRead,
+      render: (row) => {
+        const hitRate = getCacheHitRate(row);
+        return (
+          <div className={styles.realtimeCacheReadCell}>
+            <strong>{formatTokenCount(row.cachedTokens)}</strong>
+            <small className={hitRate !== null && hitRate < 0.8 ? styles.realtimeCacheHitLow : undefined}>
+              {hitRate === null ? '--' : formatPercent(hitRate)} {t('monitoring.realtime_cache_hit')}
+            </small>
+          </div>
+        );
+      },
     },
     cost: {
       key: 'cost',
@@ -4350,7 +4765,15 @@ export function MonitoringCenterPage() {
       headerClassName: styles.realtimeMetricHeader,
       cellClassName: () => styles.realtimeMetricCell,
       width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.cost,
-      render: (row) => (hasPrices ? formatUsd(row.totalCost) : '--'),
+      render: (row) => <RealtimeCostCell row={row} hasPrices={hasPrices} t={t} />,
+    },
+    time: {
+      key: 'time',
+      label: t('monitoring.column_time'),
+      colClassName: styles.realtimeTimeCol,
+      cellClassName: () => styles.realtimeTimeCell,
+      width: REALTIME_LOG_COLUMN_DEFAULT_WIDTHS.time,
+      render: (row) => new Date(row.timestampMs).toLocaleString(i18n.language),
     },
   }), [hasPrices, i18n.language, t]);
   const visibleRealtimeLogColumns = useMemo(
@@ -4412,10 +4835,78 @@ export function MonitoringCenterPage() {
   );
   const quotaTargetsByAccountForLoading = accountQuotaTargetsByAccount;
 
-  const savedPriceEntries = useMemo(
-    () => Object.entries(modelPrices).sort((left, right) => left[0].localeCompare(right[0])),
-    [modelPrices]
+  const priceRuleTargets = useMemo<PriceRuleTarget[]>(() => {
+    const targets = new Map<string, PriceRuleTarget>();
+    observedPriceModels.forEach((item) => {
+      const key = item.model;
+      const current = targets.get(key);
+      targets.set(key, {
+        key,
+        model: item.model,
+        requests: (current?.requests ?? 0) + item.requests,
+        lastSeenAtMs: Math.max(current?.lastSeenAtMs ?? 0, item.lastSeenAtMs),
+        rule: current?.rule,
+      });
+    });
+    priceRules.forEach((rule) => {
+      const key = rule.model;
+      const current = targets.get(key);
+      targets.set(key, {
+        key,
+        model: rule.model,
+        requests: current?.requests ?? 0,
+        lastSeenAtMs: current?.lastSeenAtMs ?? 0,
+        rule,
+      });
+    });
+    return Array.from(targets.values()).sort((left, right) => {
+      const configuredDelta = Number(Boolean(left.rule)) - Number(Boolean(right.rule));
+      if (configuredDelta !== 0) return configuredDelta;
+      return right.lastSeenAtMs - left.lastSeenAtMs || left.key.localeCompare(right.key);
+    });
+  }, [observedPriceModels, priceRules]);
+
+  const filteredPriceRuleTargets = useMemo(() => {
+    const query = priceRuleSearch.trim().toLowerCase();
+    if (!query) return priceRuleTargets;
+    return priceRuleTargets.filter((item) => {
+      const source = item.rule ? `${item.rule.sourceProvider ?? ''}/${item.rule.sourceModel ?? ''}` : '';
+      return `${item.model} ${source}`.toLowerCase().includes(query);
+    });
+  }, [priceRuleSearch, priceRuleTargets]);
+
+  const selectedPriceTarget = useMemo(
+    () => priceRuleTargets.find((item) => item.model === priceModel) ?? null,
+    [priceModel, priceRuleTargets]
   );
+
+  const configuredPriceRuleCount = priceRuleTargets.filter((item) => Boolean(item.rule)).length;
+  const unconfiguredPriceRuleCount = priceRuleTargets.length - configuredPriceRuleCount;
+  const priceSyncStatus = isPriceSyncing ? 'syncing' : priceSyncState.status;
+  const unmatchedPriceModels = priceSyncResult?.unmatched ?? priceSyncState.unmatchedModels ?? [];
+  const unmatchedPriceModelCount = priceSyncResult ? unmatchedPriceModels.length : (priceSyncState.unmatched ?? unmatchedPriceModels.length);
+  const priceSyncChanges = useMemo(() => priceSyncResult?.changes ?? [], [priceSyncResult]);
+  const priceSyncLockedOverrideSet = useMemo(() => new Set(priceSyncLockedOverrides), [priceSyncLockedOverrides]);
+  const priceSyncChangeCounts = useMemo(() => {
+    const counts: Record<ModelPriceSyncChangeAction, number> = { added: 0, updated: 0, overridden: 0, locked: 0, unmatched: 0 };
+    priceSyncChanges.forEach((change) => {
+      const action = change.action === 'locked' && priceSyncLockedOverrideSet.has(change.model) ? 'overridden' : change.action;
+      counts[action] += 1;
+    });
+    return counts;
+  }, [priceSyncChanges, priceSyncLockedOverrideSet]);
+  const filteredPriceSyncChanges = useMemo(
+    () => priceSyncChangeFilter === 'all'
+      ? priceSyncChanges
+      : priceSyncChanges.filter((change) => {
+        const action = change.action === 'locked' && priceSyncLockedOverrideSet.has(change.model) ? 'overridden' : change.action;
+        return action === priceSyncChangeFilter;
+      }),
+    [priceSyncChangeFilter, priceSyncChanges, priceSyncLockedOverrideSet]
+  );
+  const lockedPriceSyncChanges = useMemo(() => priceSyncChanges.filter((change) => change.action === 'locked'), [priceSyncChanges]);
+  const allLockedPriceSyncChangesSelected = lockedPriceSyncChanges.length > 0
+    && lockedPriceSyncChanges.every((change) => priceSyncLockedOverrideSet.has(change.model));
 
   const selectedFiltersCount =
     [selectedProvider, selectedModel, selectedApiKey, selectedStatus].filter(
@@ -4667,54 +5158,169 @@ export function MonitoringCenterPage() {
     }));
   }, [expandedAccounts, loadAccountQuota]);
 
-  const handlePriceModelChange = useCallback(
-    (value: string) => {
-      setPriceModel(value);
-      setPriceDraft(createPriceDraft(modelPrices[value]));
-    },
-    [modelPrices]
-  );
+  const refreshPriceManagement = useCallback(async () => {
+    const [rulesPayload, syncState] = await Promise.all([loadModelPriceRules(), loadModelPriceSyncState()]);
+    setPriceRules(rulesPayload.rules);
+    setObservedPriceModels(rulesPayload.observedModels);
+    setPriceSyncState(syncState);
+    return rulesPayload;
+  }, []);
 
-  const handlePriceDraftChange = useCallback((field: keyof PriceDraft, value: string) => {
+  const selectPriceTarget = useCallback((model: string, rules = priceRules) => {
+    setPriceModel(model);
+    setPriceDraft(createPriceDraft(rules.find((rule) => rule.model === model)));
+  }, [priceRules]);
+
+  const openPriceManagement = useCallback(async () => {
+    if (connectionStatus !== 'connected') {
+      showNotification(t('notification.connection_required'), 'warning');
+      return;
+    }
+    setIsPriceModalOpen(true);
+    setPriceManagementView('rules');
+    setPriceRuleSearch('');
+    setPriceSyncLockedOverrides([]);
+    setIsPriceLoading(true);
+    setIsMonitoringSettingsLoading(true);
+    try {
+      const [payload] = await Promise.all([refreshPriceManagement(), fetchMonitoringSettings()]);
+      const selectedStillExists = payload.observedModels.some((item) => item.model === priceModel)
+        || payload.rules.some((rule) => rule.model === priceModel);
+      if (selectedStillExists) {
+        selectPriceTarget(priceModel, payload.rules);
+      } else {
+        const nextTarget = payload.observedModels.find((item) => !payload.rules.some((rule) => rule.model === item.model))
+          ?? payload.observedModels[0]
+          ?? payload.rules[0];
+        if (nextTarget) {
+          selectPriceTarget(nextTarget.model, payload.rules);
+        } else {
+          setPriceModel('');
+          setPriceDraft(createPriceDraft());
+        }
+      }
+    } catch (error) {
+      showNotification(error instanceof Error ? error.message : String(error), 'error');
+    } finally {
+      setIsPriceLoading(false);
+      setIsMonitoringSettingsLoading(false);
+    }
+  }, [connectionStatus, fetchMonitoringSettings, priceModel, refreshPriceManagement, selectPriceTarget, showNotification, t]);
+
+  const handlePriceDraftChange = useCallback((field: Exclude<keyof PriceDraft, 'tiers'>, value: string) => {
     setPriceDraft((previous) => ({ ...previous, [field]: value }));
   }, []);
 
-  const resetPriceEditor = useCallback(() => {
-    setPriceModel('');
-    setPriceDraft(createPriceDraft());
-  }, []);
+	const handlePriceTierChange = useCallback((index: number, field: keyof PriceTierDraft, value: string) => {
+		setPriceDraft((previous) => ({
+			...previous,
+			tiers: previous.tiers.map((tier, tierIndex) => tierIndex === index ? { ...tier, [field]: value } : tier),
+		}));
+	}, []);
 
-  const handleSavePrice = useCallback(() => {
-    if (!priceModel) {
-      return;
-    }
+	const addPriceTier = useCallback(() => {
+		setPriceDraft((previous) => ({
+			...previous,
+			tiers: [...previous.tiers, { contextSize: '', input: '', output: '', cacheRead: '', cacheWrite: '' }],
+		}));
+	}, []);
 
-    const prompt = parsePriceValue(priceDraft.prompt);
-    const completion = parsePriceValue(priceDraft.completion);
-    const cache = priceDraft.cache.trim() === '' ? prompt : parsePriceValue(priceDraft.cache);
+	const removePriceTier = useCallback((index: number) => {
+		setPriceDraft((previous) => ({ ...previous, tiers: previous.tiers.filter((_, tierIndex) => tierIndex !== index) }));
+	}, []);
 
-    setModelPrices({
-      ...modelPrices,
-      [priceModel]: {
-        prompt,
-        completion,
-        cache,
-      },
-    });
-  }, [modelPrices, priceDraft.cache, priceDraft.completion, priceDraft.prompt, priceModel, setModelPrices]);
+	const resetPriceEditor = useCallback(() => {
+		setPriceModel('');
+		setPriceDraft(createPriceDraft());
+	}, []);
 
-  const handleDeletePrice = useCallback(
-    (model: string) => {
-      const nextPrices = { ...modelPrices };
-      delete nextPrices[model];
-      setModelPrices(nextPrices);
+	const handleSavePrice = useCallback(async () => {
+		if (!priceModel) {
+			return;
+		}
+		const rule: ModelPriceRule = {
+			provider: '',
+			model: priceModel,
+			base: {
+				input: parsePriceValue(priceDraft.input),
+				output: parsePriceValue(priceDraft.output),
+				cacheRead: parsePriceValue(priceDraft.cacheRead),
+				cacheWrite: parsePriceValue(priceDraft.cacheWrite),
+			},
+			tiers: priceDraft.tiers
+				.map((tier) => ({
+					contextSize: parseNonNegativeInteger(tier.contextSize),
+					input: parsePriceValue(tier.input),
+					output: parsePriceValue(tier.output),
+					cacheRead: parsePriceValue(tier.cacheRead),
+					cacheWrite: parsePriceValue(tier.cacheWrite),
+				}))
+				.filter((tier) => tier.contextSize > 0),
+		};
+		setIsPriceSaving(true);
+		try {
+			await saveModelPriceRule(rule);
+			await recalculateModelPriceHistory(false);
+			await refreshPriceManagement();
+			await refreshAll();
+			showNotification(t('usage_stats.model_price_saved'), 'success');
+		} catch (error) {
+			showNotification(error instanceof Error ? error.message : String(error), 'error');
+		} finally {
+			setIsPriceSaving(false);
+		}
+	}, [priceDraft, priceModel, refreshAll, refreshPriceManagement, showNotification, t]);
 
-      if (priceModel === model) {
-        resetPriceEditor();
-      }
-    },
-    [modelPrices, priceModel, resetPriceEditor, setModelPrices]
-  );
+	const handleDeletePrice = useCallback(
+		async (model: string) => {
+			try {
+				await deleteModelPriceRule(model);
+				const payload = await refreshPriceManagement();
+				await refreshAll();
+				if (priceModel === model) {
+					const remainsObserved = payload.observedModels.some((item) => item.model === model);
+					if (remainsObserved) {
+						selectPriceTarget(model, payload.rules);
+					} else {
+						const nextTarget = payload.observedModels[0] ?? payload.rules[0];
+						if (nextTarget) selectPriceTarget(nextTarget.model, payload.rules);
+						else resetPriceEditor();
+					}
+				}
+			} catch (error) {
+				showNotification(error instanceof Error ? error.message : String(error), 'error');
+			}
+		},
+		[priceModel, refreshAll, refreshPriceManagement, resetPriceEditor, selectPriceTarget, showNotification]
+	);
+
+	const handleSyncPrices = useCallback(async (dryRun = false) => {
+		setIsPriceSyncing(true);
+		setPriceSyncResult(null);
+		setPriceSyncChangeFilter('all');
+		if (dryRun) setPriceSyncLockedOverrides([]);
+		try {
+			const result = await syncModelPricesFromModelsDev(dryRun, dryRun ? [] : priceSyncLockedOverrides);
+			setPriceSyncResult(result);
+			if (!dryRun) setPriceSyncLockedOverrides([]);
+			if (!dryRun) {
+				const payload = await refreshPriceManagement();
+				if (priceModel) selectPriceTarget(priceModel, payload.rules);
+				await refreshAll();
+			}
+			showNotification(t(dryRun ? 'usage_stats.model_price_sync_preview_complete' : 'usage_stats.model_price_sync_complete', {
+				added: result.added,
+				updated: result.updated,
+				overridden: result.overridden,
+				locked: result.locked,
+				unmatched: result.unmatched.length,
+			}), 'success');
+		} catch (error) {
+			showNotification(error instanceof Error ? error.message : String(error), 'error');
+		} finally {
+			setIsPriceSyncing(false);
+		}
+	}, [priceModel, priceSyncLockedOverrides, refreshAll, refreshPriceManagement, selectPriceTarget, showNotification, t]);
 
   return (
     <div className={styles.page}>
@@ -4743,7 +5349,7 @@ export function MonitoringCenterPage() {
               <button
                 type="button"
                 className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
-                onClick={() => setIsPriceModalOpen(true)}
+				onClick={() => void openPriceManagement()}
               >
                 {t('usage_stats.model_price_settings')}
               </button>
@@ -4752,8 +5358,9 @@ export function MonitoringCenterPage() {
                 className={`${styles.quickLinkButton} ${styles.mastheadActionButton}`}
                 onClick={() => void loadMonitoringSettings()}
                 disabled={isMonitoringSettingsLoading}
+                aria-busy={isMonitoringSettingsLoading}
               >
-                {isMonitoringSettingsLoading ? t('common.loading') : t('usage_stats.monitoring_settings')}
+                {t('usage_stats.monitoring_settings')}
               </button>
               <input
                 ref={importInputRef}
@@ -5013,10 +5620,11 @@ export function MonitoringCenterPage() {
                     key={column.key}
                     className={[
                       styles.realtimeDraggableHeader,
+                      column.key === 'time' ? styles.realtimeFixedHeader : '',
                       column.headerClassName,
                       draggedRealtimeLogColumnKey === column.key ? styles.realtimeDraggableHeaderActive : '',
                     ].filter(Boolean).join(' ')}
-                    draggable
+                    draggable={column.key !== 'time'}
                     scope="col"
                     onDragStart={(event) => handleRealtimeLogHeaderDragStart(event, column.key)}
                     onDragOver={handleRealtimeLogHeaderDragOver}
@@ -5115,7 +5723,9 @@ export function MonitoringCenterPage() {
 
       <Modal
         open={isMonitoringSettingsOpen}
-        onClose={() => setIsMonitoringSettingsOpen(false)}
+        onClose={() => {
+          if (!isMonitoringStatisticsResetting) setIsMonitoringSettingsOpen(false);
+        }}
         title={t('usage_stats.monitoring_settings')}
         width={760}
         className={styles.monitorModal}
@@ -5207,11 +5817,36 @@ export function MonitoringCenterPage() {
             <small className={styles.settingsHint}>{t('usage_stats.monitoring_settings_webdav_hint')}</small>
           </div>
 
+          <div className={`${styles.settingsSectionCard} ${styles.settingsDangerSection}`}>
+            <div className={styles.settingsSectionHeader}>
+              <strong>{t('usage_stats.monitoring_settings_data_title')}</strong>
+              <span>{t('usage_stats.monitoring_settings_data_desc')}</span>
+            </div>
+            <div className={styles.settingsDangerAction}>
+              <div>
+                <span>{t('usage_stats.monitoring_settings_data_count')}</span>
+                <strong>{formatCompactNumber(Number(usage?.total_requests) || 0)}</strong>
+              </div>
+              <Button
+                variant="danger"
+                size="sm"
+                className={styles.resetStatisticsButton}
+                onClick={handleMonitoringStatisticsReset}
+                disabled={isMonitoringStatisticsResetting || isMonitoringSettingsSaving}
+              >
+                <IconTrash2 size={15} />
+                {isMonitoringStatisticsResetting
+                  ? t('usage_stats.monitoring_settings_resetting')
+                  : t('usage_stats.monitoring_settings_reset_button')}
+              </Button>
+            </div>
+          </div>
+
           <div className={styles.priceActionsBar}>
-            <Button variant="secondary" size="sm" onClick={() => setIsMonitoringSettingsOpen(false)}>
+            <Button variant="secondary" size="sm" onClick={() => setIsMonitoringSettingsOpen(false)} disabled={isMonitoringStatisticsResetting}>
               {t('common.cancel')}
             </Button>
-            <Button variant="primary" size="sm" onClick={() => void handleSaveMonitoringSettings()} disabled={isMonitoringSettingsSaving}>
+            <Button variant="primary" size="sm" onClick={() => void handleSaveMonitoringSettings()} disabled={isMonitoringSettingsSaving || isMonitoringStatisticsResetting}>
               {isMonitoringSettingsSaving ? t('common.loading') : t('common.save')}
             </Button>
           </div>
@@ -5222,108 +5857,435 @@ export function MonitoringCenterPage() {
         open={isPriceModalOpen}
         onClose={() => setIsPriceModalOpen(false)}
         title={t('usage_stats.model_price_settings')}
-        width={860}
-        className={styles.monitorModal}
+        width={960}
+        className={`${styles.monitorModal} ${styles.priceManagerModal}`}
       >
-        <div className={styles.priceEditor}>
-          <div className={styles.priceGrid}>
-            <div className={`${styles.priceField} ${styles.priceFieldModel}`}>
-              <label>{t('usage_stats.model_name')}</label>
-              <Select
-                value={priceModel}
-                options={priceModelOptions}
-                onChange={handlePriceModelChange}
-                ariaLabel={t('usage_stats.model_name')}
-              />
-            </div>
-            <div className={`${styles.priceField} ${styles.priceFieldPrompt}`}>
-              <label>{`${t('usage_stats.model_price_prompt')} ($/1M)`}</label>
-              <Input
-                type="number"
-                value={priceDraft.prompt}
-                onChange={(event) => handlePriceDraftChange('prompt', event.target.value)}
-                placeholder="0.0000"
-                step="0.0001"
-              />
-            </div>
-            <div className={`${styles.priceField} ${styles.priceFieldCompletion}`}>
-              <label>{`${t('usage_stats.model_price_completion')} ($/1M)`}</label>
-              <Input
-                type="number"
-                value={priceDraft.completion}
-                onChange={(event) => handlePriceDraftChange('completion', event.target.value)}
-                placeholder="0.0000"
-                step="0.0001"
-              />
-            </div>
-            <div className={`${styles.priceField} ${styles.priceFieldCache}`}>
-              <label>{`${t('usage_stats.model_price_cache')} ($/1M)`}</label>
-              <Input
-                type="number"
-                value={priceDraft.cache}
-                onChange={(event) => handlePriceDraftChange('cache', event.target.value)}
-                placeholder="0.0000"
-                step="0.0001"
-              />
-            </div>
+        <div className={styles.priceManager}>
+          <div className={styles.priceManagerTabs} role="tablist" aria-label={t('usage_stats.model_price_settings')}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={priceManagementView === 'rules'}
+              className={`${styles.priceManagerTab} ${priceManagementView === 'rules' ? styles.priceManagerTabActive : ''}`}
+              onClick={() => setPriceManagementView('rules')}
+            >
+              {t('usage_stats.model_price_tab_rules')}
+              <span>{configuredPriceRuleCount}/{priceRuleTargets.length}</span>
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={priceManagementView === 'sync'}
+              className={`${styles.priceManagerTab} ${priceManagementView === 'sync' ? styles.priceManagerTabActive : ''}`}
+              onClick={() => setPriceManagementView('sync')}
+            >
+              {t('usage_stats.model_price_tab_sync')}
+              {unconfiguredPriceRuleCount > 0 ? <span>{unconfiguredPriceRuleCount}</span> : null}
+            </button>
           </div>
 
-          <div className={styles.priceActionsBar}>
-            <Button variant="secondary" size="sm" onClick={resetPriceEditor}>
-              {t('common.cancel')}
-            </Button>
-            <Button variant="primary" size="sm" onClick={handleSavePrice} disabled={!priceModel}>
-              {t('common.save')}
-            </Button>
-          </div>
-        </div>
+          {priceManagementView === 'rules' ? (
+            <div className={styles.priceRuleWorkspace}>
+              <aside className={styles.priceRuleSidebar}>
+                <div className={styles.priceRuleSearch}>
+                  <IconSearch size={15} />
+                  <Input
+                    value={priceRuleSearch}
+                    onChange={(event) => setPriceRuleSearch(event.target.value)}
+                    placeholder={t('usage_stats.model_price_search_placeholder')}
+                  />
+                </div>
+                <div className={styles.priceRuleList}>
+                  {isPriceLoading ? <div className={styles.priceRuleListEmpty}>{t('common.loading')}</div> : null}
+                  {!isPriceLoading && filteredPriceRuleTargets.map((item) => {
+                    const active = item.model === priceModel;
+                    return (
+                      <button
+                        key={item.key}
+                        type="button"
+                        className={`${styles.priceRuleListItem} ${active ? styles.priceRuleListItemActive : ''}`}
+                        onClick={() => selectPriceTarget(item.model)}
+                      >
+                        <span className={styles.priceRuleListIdentity}>
+                          <strong title={item.model}>{item.model}</strong>
+                        </span>
+                        <span className={styles.priceRuleListMeta}>
+                          <span className={item.rule ? styles.priceRuleConfigured : styles.priceRuleUnconfigured}>
+                            {t(item.rule ? 'usage_stats.model_price_configured' : 'usage_stats.model_price_unconfigured')}
+                          </span>
+                          <small>{t('usage_stats.model_price_requests', { count: item.requests })}</small>
+                        </span>
+                      </button>
+                    );
+                  })}
+                  {!isPriceLoading && filteredPriceRuleTargets.length === 0 ? (
+                    <div className={styles.priceRuleListEmpty}>{t('usage_stats.model_price_search_empty')}</div>
+                  ) : null}
+                </div>
+              </aside>
 
-        <div className={styles.savedPricesList}>
-          <div className={styles.savedPricesHeader}>{t('usage_stats.saved_prices')}</div>
-          {savedPriceEntries.length > 0 ? (
-            <div className={styles.savedPricesTableWrap}>
-              <table className={styles.savedPricesTable}>
-                <thead>
-                  <tr>
-                    <th>{t('usage_stats.model_name')}</th>
-                    <th>{t('usage_stats.model_price_prompt')}</th>
-                    <th>{t('usage_stats.model_price_completion')}</th>
-                    <th>{t('usage_stats.model_price_cache')}</th>
-                    <th>{t('common.action')}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {savedPriceEntries.map(([model, price]) => (
-                    <tr key={model}>
-                      <td className={`${styles.monoCell} ${styles.savedPricesModelCell}`}>{model}</td>
-                      <td>{formatPriceUnit(price.prompt)}</td>
-                      <td>{formatPriceUnit(price.completion)}</td>
-                      <td>{formatPriceUnit(price.cache)}</td>
-                      <td className={styles.savedPricesActionsCell}>
-                        <div className={styles.savedPricesActions}>
-                          <button
-                            type="button"
-                            className={styles.inlineActionButton}
-                            onClick={() => handlePriceModelChange(model)}
-                          >
-                            {t('common.edit')}
-                          </button>
-                          <button
-                            type="button"
-                            className={styles.inlineActionButton}
-                            onClick={() => handleDeletePrice(model)}
-                          >
-                            {t('common.delete')}
-                          </button>
+              <section className={styles.priceRuleEditorPane}>
+                {selectedPriceTarget ? (
+                  <>
+                    <header className={styles.priceRuleEditorHeader}>
+                      <div>
+                        <h3 title={selectedPriceTarget.model}>{selectedPriceTarget.model}</h3>
+                        <span>{t('usage_stats.model_price_model_scope')}</span>
+                      </div>
+                      <div className={styles.priceRuleEditorBadges}>
+                        <span className={selectedPriceTarget.rule ? styles.priceRuleConfigured : styles.priceRuleUnconfigured}>
+                          {t(selectedPriceTarget.rule ? 'usage_stats.model_price_configured' : 'usage_stats.model_price_unconfigured')}
+                        </span>
+                        {selectedPriceTarget.rule?.source ? <span>{selectedPriceTarget.rule.source}</span> : null}
+                      </div>
+                    </header>
+
+                    <div className={styles.priceRuleEditorScroll}>
+                      <section className={styles.priceRuleSection}>
+                        <div className={styles.priceRuleSectionHeader}>
+                          <h4>{t('usage_stats.model_price_base_rates')}</h4>
+                          <span>USD / 1M</span>
                         </div>
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+                        <div className={styles.priceBaseGrid}>
+                          {([
+                            ['input', 'usage_stats.model_price_input'],
+                            ['output', 'usage_stats.model_price_output'],
+                            ['cacheRead', 'usage_stats.model_price_cache_read'],
+                            ['cacheWrite', 'usage_stats.model_price_cache_write'],
+                          ] as const).map(([field, label]) => (
+                            <label className={styles.priceField} key={field}>
+                              <span>{t(label)}</span>
+                              <Input
+                                type="number"
+                                min="0"
+                                step="0.0001"
+                                value={priceDraft[field]}
+                                onChange={(event) => handlePriceDraftChange(field, event.target.value)}
+                                placeholder="0.0000"
+                              />
+                            </label>
+                          ))}
+                        </div>
+                      </section>
+
+                      <section className={styles.priceRuleSection}>
+                        <div className={styles.priceRuleSectionHeader}>
+                          <div>
+                            <h4>{t('usage_stats.model_price_context_tier')}</h4>
+                            <span>{t('usage_stats.model_price_tier_count', { count: priceDraft.tiers.length })}</span>
+                          </div>
+                          <Button variant="secondary" size="sm" onClick={addPriceTier}>
+                            {t('usage_stats.model_price_tier_add')}
+                          </Button>
+                        </div>
+                        <div className={styles.priceTierList}>
+                          {priceDraft.tiers.map((tier, index) => (
+                            <div className={styles.priceTierCompactRow} key={index}>
+                              <span className={styles.priceTierIndex}>{index + 1}</span>
+                              <label>
+                                <span>{t('usage_stats.model_price_context_threshold')}</span>
+                                <Input type="number" min="1" step="1" value={tier.contextSize} onChange={(event) => handlePriceTierChange(index, 'contextSize', event.target.value)} placeholder="272000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_input')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.input} onChange={(event) => handlePriceTierChange(index, 'input', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_output')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.output} onChange={(event) => handlePriceTierChange(index, 'output', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_cache_read')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.cacheRead} onChange={(event) => handlePriceTierChange(index, 'cacheRead', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <label>
+                                <span>{t('usage_stats.model_price_cache_write')}</span>
+                                <Input type="number" min="0" step="0.0001" value={tier.cacheWrite} onChange={(event) => handlePriceTierChange(index, 'cacheWrite', event.target.value)} placeholder="0.0000" />
+                              </label>
+                              <button
+                                type="button"
+                                className={styles.priceTierRemoveButton}
+                                onClick={() => removePriceTier(index)}
+                                aria-label={t('usage_stats.model_price_tier_remove')}
+                                title={t('usage_stats.model_price_tier_remove')}
+                              >
+                                <IconTrash2 size={15} />
+                              </button>
+                            </div>
+                          ))}
+                          {priceDraft.tiers.length === 0 ? (
+                            <div className={styles.priceTierEmpty}>{t('usage_stats.model_price_tier_empty')}</div>
+                          ) : null}
+                        </div>
+                      </section>
+                    </div>
+
+                    <footer className={styles.priceRuleEditorFooter}>
+                      <div>
+                        {selectedPriceTarget.rule ? (
+                          <Button variant="secondary" size="sm" onClick={() => void handleDeletePrice(selectedPriceTarget.model)}>
+                            {t('common.delete')}
+                          </Button>
+                        ) : null}
+                      </div>
+                      <div>
+                        <Button variant="secondary" size="sm" onClick={() => setPriceDraft(createPriceDraft(selectedPriceTarget.rule))}>
+                          {t('usage_stats.model_price_reset_changes')}
+                        </Button>
+                        <Button variant="primary" size="sm" onClick={() => void handleSavePrice()} disabled={isPriceSaving}>
+                          {isPriceSaving ? t('common.loading') : t('common.save')}
+                        </Button>
+                      </div>
+                    </footer>
+                  </>
+                ) : (
+                  <div className={styles.priceRuleEditorEmpty}>{t('usage_stats.model_price_select_empty')}</div>
+                )}
+              </section>
             </div>
           ) : (
-            <div className={styles.emptyBlockSmall}>{t('usage_stats.model_price_empty')}</div>
+            <div className={styles.priceSyncView}>
+              <header className={styles.priceSyncHeader}>
+                <div>
+                  <span className={`${styles.priceSyncStatusDot} ${styles[`priceSyncStatus${priceSyncStatus}`] ?? ''}`} />
+                  <div>
+                    <h3>{t(`usage_stats.model_price_sync_state_${priceSyncStatus}`, { defaultValue: priceSyncStatus })}</h3>
+                    <span>
+                      {priceSyncState.lastSuccessMs
+                        ? t('usage_stats.model_price_last_sync', { value: formatShortDateTime(priceSyncState.lastSuccessMs) })
+                        : t('usage_stats.model_price_sync_never')}
+                    </span>
+                  </div>
+                </div>
+                <div className={styles.priceSyncActions}>
+                  <Button variant="secondary" size="sm" onClick={() => void handleSyncPrices(true)} disabled={isPriceSyncing || isPriceLoading}>
+                    {t('usage_stats.model_price_sync_preview')}
+                  </Button>
+                  <Button
+                    variant="primary"
+                    size="sm"
+                    className={styles.priceSyncApplyButton}
+                    onClick={() => void handleSyncPrices(false)}
+                    disabled={isPriceSyncing || isPriceLoading}
+                  >
+                    <IconRefreshCw size={14} className={styles.priceSyncApplyIcon} />
+                    {isPriceSyncing
+                      ? t('common.loading')
+                      : priceSyncLockedOverrides.length > 0
+                        ? t('usage_stats.model_price_sync_with_overrides', { count: priceSyncLockedOverrides.length })
+                        : t('usage_stats.model_price_sync')}
+                  </Button>
+                </div>
+              </header>
+
+              <div className={styles.priceSyncMetrics}>
+                {([
+                  ['matched', priceSyncResult?.matched ?? priceSyncState.matched ?? 0],
+                  ['added', priceSyncResult?.added ?? priceSyncState.added ?? 0],
+                  ['updated', priceSyncResult?.updated ?? priceSyncState.updated ?? 0],
+                  ['unmatched', unmatchedPriceModelCount],
+                ] as const).map(([key, value]) => (
+                  <div key={key} className={`${styles.priceSyncMetric} ${styles[`priceSyncMetric${key}`] ?? ''}`}>
+                    <span>{t(`usage_stats.model_price_sync_metric_${key}`)}</span>
+                    <strong>{formatCompactNumber(value)}</strong>
+                  </div>
+                ))}
+              </div>
+
+              {priceSyncState.error ? <div className={styles.priceSyncError}>{priceSyncState.error}</div> : null}
+
+              {priceSyncResult ? (
+                <section className={styles.priceSyncChangesSection}>
+                  <div className={styles.priceSyncChangesHeader}>
+                    <div>
+                      <h4>{t(priceSyncResult.dryRun ? 'usage_stats.model_price_sync_preview_details' : 'usage_stats.model_price_sync_applied_details')}</h4>
+                      <span>{t('usage_stats.model_price_sync_change_summary', {
+                        added: priceSyncChangeCounts.added,
+                        updated: priceSyncChangeCounts.updated,
+                        overridden: priceSyncChangeCounts.overridden,
+                        locked: priceSyncChangeCounts.locked,
+                        unmatched: unmatchedPriceModelCount,
+                      })}</span>
+                    </div>
+                    <div className={styles.priceSyncChangesToolbar}>
+                      {lockedPriceSyncChanges.length > 0 ? (
+                        <label className={styles.priceSyncOverrideAll}>
+                          <input
+                            type="checkbox"
+                            checked={allLockedPriceSyncChangesSelected}
+                            onChange={(event) => setPriceSyncLockedOverrides(event.target.checked ? lockedPriceSyncChanges.map((change) => change.model) : [])}
+                          />
+                          <span>{t('usage_stats.model_price_sync_override_all', { count: lockedPriceSyncChanges.length })}</span>
+                        </label>
+                      ) : null}
+                      <div className={styles.priceSyncChangeFilters}>
+                        {(['all', 'added', 'updated', 'overridden', 'locked', 'unmatched'] as const).map((filter) => {
+                          const count = filter === 'all' ? priceSyncChanges.length : priceSyncChangeCounts[filter];
+                          if (filter !== 'all' && count === 0) return null;
+                          const filterLabel = filter === 'overridden' && priceSyncResult.dryRun
+                            ? t('usage_stats.model_price_sync_override_selected')
+                            : t(`usage_stats.model_price_sync_change_${filter}`);
+                          return (
+                            <button
+                              type="button"
+                              key={filter}
+                              className={priceSyncChangeFilter === filter ? styles.priceSyncChangeFilterActive : ''}
+                              onClick={() => setPriceSyncChangeFilter(filter)}
+                            >
+                              <span className={styles.priceSyncChangeFilterLabel}>{filterLabel}</span>
+                              <span className={styles.priceSyncChangeFilterCount}>{count}</span>
+                            </button>
+                          );
+                        })}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className={styles.priceSyncChangeList}>
+                    {filteredPriceSyncChanges.map((change) => {
+                      const rateChanges = MODEL_PRICE_SYNC_RATE_FIELDS.filter(([field]) => (
+                        change.after && (!change.before || change.before.base[field] !== change.after.base[field])
+                      ));
+                      const beforeTierCount = change.before?.tiers?.length ?? 0;
+                      const afterTierCount = change.after?.tiers?.length ?? 0;
+                      const overrideSelected = change.action === 'locked' && priceSyncLockedOverrideSet.has(change.model);
+                      const displayedAction = overrideSelected ? 'overridden' : change.action;
+                      return (
+                        <article className={styles.priceSyncChangeRow} key={`${change.action}/${change.model}`}>
+                          <div className={styles.priceSyncChangeIdentity}>
+                            <span className={`${styles.priceSyncChangeBadge} ${styles[`priceSyncChange${displayedAction}`] ?? ''}`}>
+                              {overrideSelected
+                                ? t('usage_stats.model_price_sync_override_selected')
+                                : t(`usage_stats.model_price_sync_change_${displayedAction}`)}
+                            </span>
+                            <div>
+                              <strong title={change.model}>{change.model}</strong>
+                              <small>
+                                {change.sourceProvider
+                                  ? `${change.sourceProvider}/${change.sourceModel || change.model}`
+                                  : t('usage_stats.model_price_sync_change_no_source')}
+                                {' · '}
+                                {t('usage_stats.model_price_requests', { count: change.requests })}
+                              </small>
+                            </div>
+                          </div>
+
+                          {change.action !== 'unmatched' ? (
+                            <div className={styles.priceSyncRateChanges}>
+                              {rateChanges.map(([field, label]) => (
+                                <div key={field}>
+                                  <span>{t(label)}</span>
+                                  <div>
+                                    {change.before ? <del>{formatModelPriceRate(change.before.base[field])}</del> : null}
+                                    {change.before ? <span aria-hidden="true">-&gt;</span> : null}
+                                    <strong>{formatModelPriceRate(change.after?.base[field])}</strong>
+                                  </div>
+                                </div>
+                              ))}
+                              {beforeTierCount !== afterTierCount ? (
+                                <div>
+                                  <span>{t('usage_stats.model_price_context_tier')}</span>
+                                  <div>
+                                    <del>{beforeTierCount}</del>
+                                    <span aria-hidden="true">-&gt;</span>
+                                    <strong>{afterTierCount}</strong>
+                                  </div>
+                                </div>
+                              ) : null}
+                              {rateChanges.length === 0 && beforeTierCount === afterTierCount ? (
+                                <small>{t(change.action === 'locked'
+                                  ? overrideSelected
+                                    ? 'usage_stats.model_price_sync_override_selected_hint'
+                                    : 'usage_stats.model_price_sync_change_locked_hint'
+                                  : 'usage_stats.model_price_sync_change_metadata_hint')}</small>
+                              ) : null}
+                              {change.action === 'locked' ? (
+                                <label className={styles.priceSyncOverrideOption}>
+                                  <input
+                                    type="checkbox"
+                                    checked={overrideSelected}
+                                    onChange={(event) => setPriceSyncLockedOverrides((previous) => (
+                                      event.target.checked
+                                        ? Array.from(new Set([...previous, change.model]))
+                                        : previous.filter((model) => model !== change.model)
+                                    ))}
+                                  />
+                                  <span>{t(overrideSelected
+                                    ? 'usage_stats.model_price_sync_override_selected'
+                                    : 'usage_stats.model_price_sync_override_option')}</span>
+                                </label>
+                              ) : null}
+                            </div>
+                          ) : (
+                            <span className={styles.priceSyncChangeHint}>{t('usage_stats.model_price_sync_change_unmatched_hint')}</span>
+                          )}
+                        </article>
+                      );
+                    })}
+                    {filteredPriceSyncChanges.length === 0 ? (
+                      <div className={styles.priceSyncChangesEmpty}>{t('usage_stats.model_price_sync_no_changes')}</div>
+                    ) : null}
+                  </div>
+                </section>
+              ) : unmatchedPriceModelCount > 0 ? (
+                <section className={styles.priceSyncResultSection}>
+                  <div className={styles.priceRuleSectionHeader}>
+                    <div>
+                      <h4>{t('usage_stats.model_price_sync_unmatched')}</h4>
+                      <span>{unmatchedPriceModelCount}</span>
+                    </div>
+                  </div>
+                  <div className={styles.priceUnmatchedList}>
+                  {unmatchedPriceModels.map((item) => (
+                    <div key={item.model}>
+                      <span>
+                        <strong title={item.model}>{item.model}</strong>
+                        {item.alias ? <small title={item.alias}>{item.alias}</small> : null}
+                      </span>
+                      <small>{t('usage_stats.model_price_requests', { count: item.requests })}</small>
+                    </div>
+                  ))}
+                  </div>
+                </section>
+              ) : null}
+
+              <section className={styles.priceSyncSchedule}>
+                <div>
+                  <strong>{t('usage_stats.model_price_sync_schedule_title')}</strong>
+                  <span>{t('usage_stats.model_price_sync_schedule_desc')}</span>
+                </div>
+                <div className={styles.priceSyncScheduleControls}>
+                  <label className={styles.priceSyncScheduleToggle}>
+                    <input
+                      type="checkbox"
+                      checked={monitoringSettingsDraft.modelPriceSyncEnabled}
+                      onChange={(event) => setMonitoringSettingsDraft((previous) => ({ ...previous, modelPriceSyncEnabled: event.target.checked }))}
+                    />
+                    <span>{t('usage_stats.model_price_sync_schedule_enabled')}</span>
+                  </label>
+                  <label className={styles.priceSyncScheduleInterval}>
+                    <span>{t('usage_stats.model_price_sync_schedule_interval')}</span>
+                    <Input
+                      type="number"
+                      min="60"
+                      step="60"
+                      value={monitoringSettingsDraft.modelPriceSyncIntervalMinutes}
+                      onChange={(event) => setMonitoringSettingsDraft((previous) => ({ ...previous, modelPriceSyncIntervalMinutes: event.target.value }))}
+                      placeholder="1440"
+                      disabled={!monitoringSettingsDraft.modelPriceSyncEnabled}
+                    />
+                  </label>
+                  <Button
+                    variant="secondary"
+                    size="sm"
+                    onClick={() => void handleSaveMonitoringSettings(false)}
+                    disabled={isMonitoringSettingsLoading || isMonitoringSettingsSaving}
+                  >
+                    {isMonitoringSettingsSaving ? t('common.loading') : t('common.save')}
+                  </Button>
+                </div>
+              </section>
+            </div>
           )}
         </div>
       </Modal>

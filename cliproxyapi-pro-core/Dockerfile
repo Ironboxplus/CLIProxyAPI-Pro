@@ -31,6 +31,9 @@ RUN set -eux; \
 COPY embeddedusage ./internal/embeddedusage
 COPY patches/apply_upstream_patches.py /tmp/apply_upstream_patches.py
 COPY patches/account_inspection_scheduler.go /tmp/account_inspection_scheduler.go
+COPY patches/routing_protection_config.go /tmp/routing_protection_config.go
+COPY patches/routing_policy.go /tmp/routing_policy.go
+COPY patches/routing_policy_test.go /tmp/routing_policy_test.go
 COPY patches/redisqueue_plugin.go /tmp/redisqueue_plugin.go
 COPY patches/redisqueue_usage_toggle.go /tmp/redisqueue_usage_toggle.go
 COPY plugins/cpa-sensitive /src/cpa-sensitive

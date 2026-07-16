@@ -1,0 +1,757 @@
+@use '../styles/mixins' as *;
+@use '../styles/variables' as *;
+
+.container {
+  width: min(100%, 1480px);
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-lg;
+  margin: 0 auto;
+  padding-bottom: calc(
+    var(--routing-policy-action-bar-height, 0px) + 16px + env(safe-area-inset-bottom) + #{$spacing-md}
+  );
+}
+
+.pageHeader {
+  display: flex;
+  align-items: flex-start;
+  gap: $spacing-lg;
+}
+
+.headerCopy {
+  min-width: 0;
+}
+
+.titleRow {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+}
+
+.pageTitle {
+  margin: 0;
+  color: var(--text-primary);
+  font-size: 28px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.subtitle {
+  margin: 8px 0 0;
+  color: var(--text-secondary);
+  font-size: 14px;
+  line-height: 1.5;
+}
+
+.modeBadge,
+.providerTag,
+.actionTag,
+.tabCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  white-space: nowrap;
+}
+
+.modeBadge {
+  gap: 5px;
+  min-height: 28px;
+  padding: 3px 9px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.modeEnforce {
+  border-color: color-mix(in srgb, $warning-color 45%, var(--border-color));
+  background: color-mix(in srgb, $warning-color 10%, var(--bg-primary));
+  color: $warning-color;
+}
+
+.viewTabs {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 2px;
+  width: min(100%, 620px);
+  padding: 2px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.viewTab {
+  @include button-reset;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  min-height: 38px;
+  padding: 0 12px;
+  border: 1px solid transparent;
+  border-radius: 6px;
+  color: var(--text-secondary);
+  font-size: 13px;
+  font-weight: 650;
+}
+
+.viewTabActive {
+  border-color: var(--text-primary);
+  background: var(--text-primary);
+  color: var(--bg-primary);
+}
+
+.tabCount {
+  min-width: 20px;
+  min-height: 20px;
+  padding: 0 6px;
+  border-color: currentColor;
+  font-size: 11px;
+}
+
+.sectionStack {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-lg;
+}
+
+.panel,
+.protectionBar {
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  padding: $spacing-lg;
+}
+
+.sectionHeader,
+.sectionHeaderWithAction {
+  margin-bottom: $spacing-md;
+
+  h2 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  p {
+    margin: 5px 0 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+  }
+}
+
+.sectionHeaderWithAction {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: $spacing-md;
+
+  button > span {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+  }
+}
+
+.fieldGrid,
+.fieldGridThree,
+.toggleGrid {
+  display: grid;
+  gap: $spacing-md;
+}
+
+.fieldGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.fieldGridThree {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+
+  :global(.form-group) {
+    margin-bottom: 0;
+  }
+}
+
+.toggleGrid {
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.fieldBlock {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+
+  > label {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 600;
+  }
+
+  :global(.form-group) {
+    margin-bottom: 0;
+  }
+}
+
+.singleField {
+  width: min(100%, 460px);
+  margin-top: $spacing-md;
+
+  :global(.form-group) {
+    margin-bottom: 0;
+  }
+}
+
+.toggleField {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-md;
+  min-height: 70px;
+  padding: 12px 14px;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+  background: var(--bg-secondary);
+
+  > div:first-child {
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  strong {
+    color: var(--text-primary);
+    font-size: 14px;
+    font-weight: 650;
+  }
+
+  span {
+    color: var(--text-secondary);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+}
+
+.protectionBar {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(220px, 320px);
+  align-items: center;
+  gap: $spacing-xl;
+}
+
+.protectionMaster {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-lg;
+
+  h2 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 18px;
+  }
+
+  p {
+    margin: 5px 0 0;
+    color: var(--text-secondary);
+    font-size: 13px;
+    line-height: 1.45;
+  }
+}
+
+.modeSelect {
+  display: flex;
+  flex-direction: column;
+  gap: 7px;
+
+  label {
+    color: var(--text-primary);
+    font-size: 13px;
+    font-weight: 650;
+  }
+}
+
+.providerGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $spacing-lg;
+}
+
+.providerCard {
+  min-width: 0;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-primary);
+  overflow: hidden;
+}
+
+.providerHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: $spacing-md;
+  min-height: 74px;
+  padding: 14px $spacing-md;
+  border-bottom: 1px solid var(--border-color);
+  background: var(--bg-secondary);
+
+  h2 {
+    margin: 0;
+    color: var(--text-primary);
+    font-size: 17px;
+  }
+
+  span {
+    color: var(--text-tertiary);
+    font-family: $font-mono;
+    font-size: 11px;
+  }
+}
+
+.providerFields {
+  display: flex;
+  flex-direction: column;
+  gap: $spacing-md;
+  padding: $spacing-md;
+
+  :global(.form-group) {
+    margin-bottom: 0;
+  }
+}
+
+.compactFields {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: $spacing-sm;
+}
+
+.providerToggles {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: $spacing-sm;
+
+  .toggleField {
+    min-height: 84px;
+  }
+}
+
+.tableScroller {
+  width: 100%;
+  overflow-x: auto;
+  border: 1px solid var(--border-color);
+  border-radius: 7px;
+}
+
+.runtimeTableScroller {
+  max-height: min(420px, 50vh);
+  overflow: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+
+  .table th {
+    position: sticky;
+    top: 0;
+    z-index: 2;
+    box-shadow: 0 1px 0 var(--border-color);
+  }
+}
+
+.runtimeTable {
+  min-width: 1080px;
+  table-layout: fixed;
+
+  th,
+  td {
+    overflow: hidden;
+  }
+
+  .accountName,
+  .accountIndex {
+    max-width: 100%;
+  }
+}
+
+.runtimeProviderColumn {
+  width: 130px;
+}
+
+.runtimeAccountColumn {
+  width: 340px;
+}
+
+.runtimeEventAccountColumn {
+  width: 320px;
+}
+
+.runtimeStatusColumn {
+  width: 88px;
+}
+
+.runtimeTimeColumn {
+  width: 180px;
+}
+
+.runtimeReleaseColumn {
+  width: 160px;
+}
+
+.runtimeActionsColumn {
+  width: 120px;
+}
+
+.runtimeEventActionColumn {
+  width: 130px;
+}
+
+.runtimeConfirmationColumn {
+  width: 110px;
+}
+
+.runtimeTimeCell {
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.runtimeActionHeader,
+.runtimeActionCell {
+  text-align: right !important;
+}
+
+.runtimeReleaseButton {
+  min-width: 88px;
+  white-space: nowrap;
+
+  > span {
+    white-space: nowrap;
+  }
+}
+
+.runtimeStatusButton {
+  @include button-reset;
+  display: inline-flex;
+  align-items: center;
+  min-width: 0;
+  border-radius: 999px;
+  cursor: pointer;
+}
+
+.runtimeStatusButton:hover .runtimeStatusBadge {
+  filter: brightness(0.97);
+}
+
+.runtimeStatusButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, $error-color 42%, var(--border-color));
+  outline-offset: 2px;
+}
+
+.runtimeStatusBadge {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  min-width: 56px;
+  min-height: 24px;
+  padding: 0 8px;
+  border: 1px solid var(--border-color);
+  border-radius: 999px;
+  background: var(--bg-primary);
+  font-family: $font-mono;
+  font-size: 12px;
+  font-weight: 650;
+  font-variant-numeric: tabular-nums;
+  line-height: 1;
+  white-space: nowrap;
+  transition:
+    border-color 0.18s ease,
+    background-color 0.18s ease,
+    color 0.18s ease,
+    filter 0.18s ease;
+}
+
+.runtimeStatusBadge::before {
+  content: '';
+  width: 6px;
+  height: 6px;
+  flex: 0 0 auto;
+  border-radius: 50%;
+  background: currentColor;
+}
+
+.runtimeStatusGood {
+  border-color: color-mix(in srgb, $success-color 28%, var(--border-color));
+  background: color-mix(in srgb, $success-color 9%, var(--bg-primary));
+  color: $success-color;
+}
+
+.runtimeStatusWarn {
+  border-color: color-mix(in srgb, $warning-color 32%, var(--border-color));
+  background: color-mix(in srgb, $warning-color 9%, var(--bg-primary));
+  color: $warning-color;
+}
+
+.runtimeStatusBad {
+  border-color: color-mix(in srgb, $error-color 32%, var(--border-color));
+  background: color-mix(in srgb, $error-color 8%, var(--bg-primary));
+  color: $error-color;
+}
+
+.runtimeStatusNeutral {
+  color: var(--text-secondary);
+}
+
+.runtimeDetailModal {
+  color: var(--text-primary);
+}
+
+.runtimeDetailPanel {
+  display: grid;
+  gap: 14px;
+  padding: 2px 0 4px;
+}
+
+.runtimeDetailModalActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.runtimeDetailOverview {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  background: var(--bg-secondary);
+}
+
+.runtimeDetailOverviewTop {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+}
+
+.runtimeDetailOverviewTop > span:last-child {
+  color: var(--text-secondary);
+  font-size: 12px;
+  font-weight: 650;
+}
+
+.runtimeDetailOverview strong {
+  min-width: 0;
+  color: var(--text-primary);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.runtimeDetailGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  overflow: hidden;
+  border: 1px solid color-mix(in srgb, var(--border-color) 82%, transparent);
+  border-radius: 8px;
+}
+
+.runtimeDetailItem {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 9px 12px;
+  background: var(--bg-primary);
+}
+
+.runtimeDetailItem + .runtimeDetailItem {
+  border-top: 1px solid color-mix(in srgb, var(--border-color) 72%, transparent);
+}
+
+.runtimeDetailItem span,
+.runtimeReasonBlock > span {
+  color: var(--text-secondary);
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.runtimeDetailItem strong {
+  min-width: 0;
+  max-width: 72%;
+  color: var(--text-primary);
+  font-family: $font-mono;
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+  text-align: right;
+  overflow-wrap: anywhere;
+}
+
+.runtimeReasonBlock {
+  display: grid;
+  gap: 6px;
+}
+
+.runtimeReasonMessage {
+  max-height: min(440px, 48vh);
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--border-color) 86%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--bg-secondary) 58%, var(--bg-primary));
+  color: var(--text-primary);
+  font-family: $font-mono;
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.table {
+  width: 100%;
+  min-width: 980px;
+  border-collapse: collapse;
+  color: var(--text-primary);
+  font-size: 13px;
+
+  th,
+  td {
+    padding: 11px 12px;
+    border-bottom: 1px solid var(--border-color);
+    text-align: left;
+    vertical-align: middle;
+  }
+
+  th {
+    background: var(--bg-secondary);
+    color: var(--text-secondary);
+    font-size: 12px;
+    font-weight: 700;
+    white-space: nowrap;
+  }
+
+  tbody tr:last-child td {
+    border-bottom: 0;
+  }
+
+  tbody tr:hover td {
+    background: color-mix(in srgb, var(--text-primary) 3%, transparent);
+  }
+}
+
+.providerTag,
+.actionTag {
+  min-height: 24px;
+  padding: 2px 8px;
+  background: var(--bg-secondary);
+  color: var(--text-secondary);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.action_disabled,
+.action_error {
+  border-color: color-mix(in srgb, $error-color 40%, var(--border-color));
+  color: $error-color;
+}
+
+.action_released {
+  border-color: color-mix(in srgb, $success-color 40%, var(--border-color));
+  color: $success-color;
+}
+
+.accountName,
+.accountIndex {
+  display: block;
+  max-width: 260px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.accountName {
+  font-size: 13px;
+}
+
+.accountIndex {
+  color: var(--text-tertiary);
+  font-family: $font-mono;
+  font-size: 11px;
+}
+
+.inlineEmpty,
+.emptyState,
+.loading {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  min-height: 180px;
+  color: var(--text-secondary);
+  font-size: 14px;
+}
+
+.emptyState {
+  flex-direction: column;
+  gap: $spacing-md;
+}
+
+@media (max-width: 1180px) {
+  .providerGrid {
+    grid-template-columns: 1fr;
+  }
+}
+
+@include tablet {
+  .fieldGridThree,
+  .compactFields {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .providerToggles {
+    grid-template-columns: 1fr;
+  }
+}
+
+@include mobile {
+  .container {
+    gap: $spacing-md;
+  }
+
+  .protectionMaster {
+    flex-direction: column;
+  }
+
+  .viewTabs,
+  .fieldGrid,
+  .fieldGridThree,
+  .toggleGrid,
+  .protectionBar,
+  .compactFields,
+  .providerToggles {
+    grid-template-columns: 1fr;
+    width: 100%;
+  }
+
+  .viewTab {
+    min-height: 36px;
+  }
+
+  .panel,
+  .protectionBar {
+    padding: $spacing-md;
+  }
+
+  .toggleField {
+    min-height: 64px;
+  }
+
+  .runtimeTableScroller {
+    max-height: min(360px, 55vh);
+  }
+}

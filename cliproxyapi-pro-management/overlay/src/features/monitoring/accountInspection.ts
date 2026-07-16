@@ -33,6 +33,8 @@ export interface AccountInspectionConfigurableSettings {
   antigravityDeepProbeEnabled: boolean;
   antigravityDeepProbeModel: string;
   antigravityQuotaMode: AccountInspectionAntigravityQuotaMode;
+  xaiDeepProbeEnabled: boolean;
+  xaiDeepProbeModel: string;
   autoExecuteQuotaLimitDisable: boolean;
   autoExecuteQuotaRecoveryEnable: boolean;
   autoExecuteAccountInvalidAction: AccountInspectionAutoErrorAction;
@@ -62,6 +64,7 @@ export interface AccountInspectionResultItem extends AccountInspectionAccount {
   usedPercent: number | null;
   isQuota: boolean;
   error: string;
+  errorDetail?: string;
   errorCode?: string;
   deepProbeTriggered?: boolean;
   deepProbeStatus?: AccountInspectionDeepProbeStatus;
@@ -181,6 +184,7 @@ export type AccountInspectionBackendStatus = {
   resultsPage?: AccountInspectionPageInfo;
   logsLimited?: boolean;
   resultsLimited?: boolean;
+  restoredSnapshot?: boolean;
   logs: AccountInspectionBackendLog[] | null;
   results: AccountInspectionBackendResultItem[] | null;
 };
@@ -256,6 +260,8 @@ export const DEFAULT_ACCOUNT_INSPECTION_SETTINGS: AccountInspectionConfigurableS
   antigravityDeepProbeEnabled: false,
   antigravityDeepProbeModel: 'claude-sonnet-4-6',
   antigravityQuotaMode: 'claude-gpt',
+  xaiDeepProbeEnabled: false,
+  xaiDeepProbeModel: 'grok-4.5',
   autoExecuteQuotaLimitDisable: false,
   autoExecuteQuotaRecoveryEnable: false,
   autoExecuteAccountInvalidAction: 'none',
@@ -367,6 +373,8 @@ const readConfigurableSettingsFromConfig = (
     antigravityDeepProbeEnabled: undefined,
     antigravityDeepProbeModel: undefined,
     antigravityQuotaMode: undefined,
+    xaiDeepProbeEnabled: undefined,
+    xaiDeepProbeModel: undefined,
   };
 };
 
@@ -438,6 +446,12 @@ const normalizeConfigurableSettings = (
     antigravityDeepProbeModel: readStringValue(merged.antigravityDeepProbeModel) ||
       DEFAULT_ACCOUNT_INSPECTION_SETTINGS.antigravityDeepProbeModel,
     antigravityQuotaMode: normalizeAntigravityQuotaMode(merged.antigravityQuotaMode),
+    xaiDeepProbeEnabled: readBooleanValue(
+      merged.xaiDeepProbeEnabled,
+      DEFAULT_ACCOUNT_INSPECTION_SETTINGS.xaiDeepProbeEnabled
+    ),
+    xaiDeepProbeModel: readStringValue(merged.xaiDeepProbeModel) ||
+      DEFAULT_ACCOUNT_INSPECTION_SETTINGS.xaiDeepProbeModel,
     autoExecuteAccountInvalidAction: normalizeAutoErrorAction(merged.autoExecuteAccountInvalidAction),
     autoExecuteRequestErrorAction: normalizeAutoErrorAction(merged.autoExecuteRequestErrorAction),
     autoExecuteConfirmations: clampInteger(
@@ -616,6 +630,7 @@ export const accountInspectionBackendResultToItem = (
   usedPercent: item.usedPercent ?? null,
   isQuota: item.isQuota,
   error: item.executeError || item.error || '',
+  errorDetail: item.errorDetail || '',
   errorCode: item.errorCode || '',
   deepProbeTriggered: item.deepProbeTriggered ?? false,
   deepProbeStatus: item.deepProbeStatus ?? '',
@@ -713,6 +728,7 @@ export const buildAccountInspectionBackendViewState = (
       disable: response.status.summary.executedDisableCount ?? 0,
       enable: response.status.summary.executedEnableCount ?? 0,
     },
+    restoredSnapshot: response.status.restoredSnapshot ?? false,
     result: hasSnapshot
       ? buildAccountInspectionBackendRunResult(response, results, startedAt, finishedAt)
       : undefined,

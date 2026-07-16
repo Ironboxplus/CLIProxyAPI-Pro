@@ -12,6 +12,85 @@ export interface ModelPrice {
   cache: number;
 }
 
+export interface ModelPriceRate {
+  input: number;
+  output: number;
+  cacheRead: number;
+  cacheWrite: number;
+  reasoning?: number;
+}
+
+export interface ModelPriceTier extends ModelPriceRate {
+  contextSize: number;
+}
+
+export interface ModelPriceRule {
+  id?: number;
+  provider: string;
+  model: string;
+  base: ModelPriceRate;
+  tiers?: ModelPriceTier[];
+  serviceTiers?: Record<string, ModelPriceRate>;
+  source?: string;
+  sourceProvider?: string;
+  sourceModel?: string;
+  locked?: boolean;
+  version?: number;
+  effectiveFromMs?: number;
+  fetchedAtMs?: number;
+  upstreamUpdated?: string;
+  updatedAtMs?: number;
+}
+
+export interface ObservedModelPriceTarget {
+  provider: string;
+  model: string;
+  alias?: string;
+  requests: number;
+  lastSeenAtMs: number;
+}
+
+export interface ModelPriceSyncState {
+  status: string;
+  lastAttemptMs?: number;
+  lastSuccessMs?: number;
+  matched?: number;
+  added?: number;
+  updated?: number;
+  unchanged?: number;
+  locked?: number;
+  unmatched?: number;
+  unmatchedModels?: ObservedModelPriceTarget[];
+  recalculated?: number;
+  error?: string;
+}
+
+export interface ModelPriceSyncResult {
+  dryRun: boolean;
+  notModified: boolean;
+  matched: number;
+  added: number;
+  updated: number;
+  overridden: number;
+  unchanged: number;
+  locked: number;
+  unmatched: ObservedModelPriceTarget[];
+  changes: ModelPriceSyncChange[];
+  recalculated: number;
+}
+
+export type ModelPriceSyncChangeAction = 'added' | 'updated' | 'overridden' | 'locked' | 'unmatched';
+
+export interface ModelPriceSyncChange {
+  action: ModelPriceSyncChangeAction;
+  model: string;
+  requests: number;
+  sourceProvider?: string;
+  sourceModel?: string;
+  before?: ModelPriceRule;
+  after?: ModelPriceRule;
+}
+
 export interface UsageTokens {
   input_tokens?: number;
   output_tokens?: number;
@@ -20,7 +99,30 @@ export interface UsageTokens {
   cache_read_tokens?: number;
   cache_creation_tokens?: number;
   cache_tokens?: number;
+  cache_write_tokens?: number;
   total_tokens?: number;
+}
+
+export interface UsageCostBreakdown {
+  ruleId: number;
+  ruleVersion: number;
+  provider: string;
+  model: string;
+  source: string;
+  contextTokens: number;
+  contextTierSize: number;
+  serviceTier: string;
+  inputTokens: number;
+  outputTokens: number;
+  cacheReadTokens: number;
+  cacheWriteTokens: number;
+  reasoningTokens: number;
+  inputCost: number;
+  outputCost: number;
+  cacheReadCost: number;
+  cacheWriteCost: number;
+  reasoningCost: number;
+  totalCost: number;
 }
 
 export interface UsageDetail {
@@ -39,8 +141,12 @@ export interface UsageDetail {
   error_message?: string;
   upstream_request_id?: string;
   retry_after?: string;
+  stream?: boolean;
   reasoning_effort?: string;
   service_tier?: string;
+  estimated_cost?: number;
+  price_rule_id?: number;
+  cost_breakdown?: UsageCostBreakdown;
   tokens: UsageTokens;
   failed: boolean;
   __modelName?: string;
@@ -221,7 +327,51 @@ const readTokens = (detail: Record<string, unknown>): UsageTokens => {
     cache_read_tokens: cacheReadTokens,
     cache_creation_tokens: cacheCreationTokens,
     cache_tokens: toFiniteNumber(tokensRaw.cache_tokens) || cacheReadTokens + cacheCreationTokens,
+    cache_write_tokens: toFiniteNumber(tokensRaw.cache_write_tokens),
     total_tokens: toFiniteNumber(tokensRaw.total_tokens),
+  };
+};
+
+const normalizeUsageCostBreakdown = (value: unknown): UsageCostBreakdown | undefined => {
+  let raw = value;
+  if (typeof raw === 'string') {
+    try {
+      raw = JSON.parse(raw);
+    } catch {
+      return undefined;
+    }
+  }
+  if (!isRecord(raw)) return undefined;
+
+  const readNumber = (camelKey: string, snakeKey: string) => toFiniteNumber(raw[camelKey] ?? raw[snakeKey]);
+  const readString = (camelKey: string, snakeKey: string) => {
+    const candidate = raw[camelKey] ?? raw[snakeKey];
+    return typeof candidate === 'string' ? candidate : '';
+  };
+  const hasCostFields = ['totalCost', 'total_cost', 'inputCost', 'input_cost', 'outputCost', 'output_cost']
+    .some((key) => raw[key] !== undefined);
+  if (!hasCostFields) return undefined;
+
+  return {
+    ruleId: readNumber('ruleId', 'rule_id'),
+    ruleVersion: readNumber('ruleVersion', 'rule_version'),
+    provider: readString('provider', 'provider'),
+    model: readString('model', 'model'),
+    source: readString('source', 'source'),
+    contextTokens: readNumber('contextTokens', 'context_tokens'),
+    contextTierSize: readNumber('contextTierSize', 'context_tier_size'),
+    serviceTier: readString('serviceTier', 'service_tier'),
+    inputTokens: readNumber('inputTokens', 'input_tokens'),
+    outputTokens: readNumber('outputTokens', 'output_tokens'),
+    cacheReadTokens: readNumber('cacheReadTokens', 'cache_read_tokens'),
+    cacheWriteTokens: readNumber('cacheWriteTokens', 'cache_write_tokens'),
+    reasoningTokens: readNumber('reasoningTokens', 'reasoning_tokens'),
+    inputCost: readNumber('inputCost', 'input_cost'),
+    outputCost: readNumber('outputCost', 'output_cost'),
+    cacheReadCost: readNumber('cacheReadCost', 'cache_read_cost'),
+    cacheWriteCost: readNumber('cacheWriteCost', 'cache_write_cost'),
+    reasoningCost: readNumber('reasoningCost', 'reasoning_cost'),
+    totalCost: readNumber('totalCost', 'total_cost'),
   };
 };
 
@@ -255,6 +405,8 @@ const buildUsageDetail = (
   const latencyMs = extractLatencyMs(detailRaw);
   const ttftMs = extractNonNegativeNumberField(detailRaw, ['ttft_ms']);
   const statusCode = extractNonNegativeNumberField(detailRaw, ['status_code']);
+  const estimatedCost = extractNonNegativeNumberField(detailRaw, ['estimated_cost', 'estimatedCost']);
+  const priceRuleID = extractNonNegativeNumberField(detailRaw, ['price_rule_id', 'priceRuleId']);
 
   const provider = typeof detailRaw.provider === 'string' ? detailRaw.provider.trim() : undefined;
   const executorType = typeof detailRaw.executor_type === 'string'
@@ -308,6 +460,7 @@ const buildUsageDetail = (
       : typeof detailRaw.retryAfter === 'string'
         ? detailRaw.retryAfter
         : undefined,
+    stream: detailRaw.stream === true,
     reasoning_effort: typeof detailRaw.reasoning_effort === 'string'
       ? detailRaw.reasoning_effort
       : typeof detailRaw.reasoningEffort === 'string'
@@ -318,6 +471,9 @@ const buildUsageDetail = (
       : typeof detailRaw.serviceTier === 'string'
         ? detailRaw.serviceTier
         : undefined,
+    estimated_cost: estimatedCost ?? undefined,
+    price_rule_id: priceRuleID ?? undefined,
+    cost_breakdown: normalizeUsageCostBreakdown(detailRaw.cost_breakdown ?? detailRaw.costBreakdown),
     tokens: readTokens(detailRaw),
     failed: detailRaw.failed === true,
     __modelName: modelName,
@@ -432,9 +588,11 @@ export function extractTotalTokens(detail: unknown): number {
 }
 
 export function calculateCost(
-  detail: Pick<UsageDetail, 'tokens' | '__modelName'>,
-  modelPrices: Record<string, ModelPrice>
+	 detail: Pick<UsageDetail, 'tokens' | '__modelName' | 'estimated_cost'>,
+	 modelPrices: Record<string, ModelPrice>
 ): number {
+	 const backendCost = Number(detail.estimated_cost);
+	 if (Number.isFinite(backendCost) && backendCost >= 0) return backendCost;
   const modelName = detail.__modelName || '';
   const price = modelPrices[modelName];
   if (!price) return 0;
@@ -494,6 +652,54 @@ export async function saveModelPricesToSqlite(prices: Record<string, ModelPrice>
   await apiClient.put(MODEL_PRICE_API_PATH, { prices: normalizeModelPrices(prices) });
 }
 
+export async function loadModelPriceRules(): Promise<{
+  rules: ModelPriceRule[];
+  observedModels: ObservedModelPriceTarget[];
+}> {
+  const payload = await apiClient.get<{ rules?: ModelPriceRule[]; observedModels?: ObservedModelPriceTarget[] }>('/usage/model-price-rules');
+  return {
+    rules: Array.isArray(payload?.rules) ? payload.rules : [],
+    observedModels: Array.isArray(payload?.observedModels) ? payload.observedModels : [],
+  };
+}
+
+export async function saveModelPriceRule(rule: ModelPriceRule): Promise<ModelPriceRule> {
+  const payload = await apiClient.put<{ rule: ModelPriceRule }>('/usage/model-price-rules', { rule });
+  return payload.rule;
+}
+
+export async function deleteModelPriceRule(model: string): Promise<void> {
+  await apiClient.delete('/usage/model-price-rules', { params: { model } });
+}
+
+export async function syncModelPricesFromModelsDev(dryRun = false, overrideLockedModels: string[] = []): Promise<ModelPriceSyncResult> {
+  const payload = await apiClient.post<ModelPriceSyncResult>('/usage/model-prices/sync', {
+    dryRun,
+    recalculateUnpriced: !dryRun,
+    overrideLockedModels,
+  });
+  return {
+    ...payload,
+    overridden: Number(payload?.overridden) || 0,
+    unmatched: Array.isArray(payload?.unmatched) ? payload.unmatched : [],
+    changes: Array.isArray(payload?.changes) ? payload.changes : [],
+  };
+}
+
+export async function loadModelPriceSyncState(): Promise<ModelPriceSyncState> {
+  const payload = await apiClient.get<{ state?: ModelPriceSyncState }>('/usage/model-prices/sync-status');
+  const state = payload?.state ?? { status: 'idle' };
+  return {
+    ...state,
+    unmatchedModels: Array.isArray(state.unmatchedModels) ? state.unmatchedModels : [],
+  };
+}
+
+export async function recalculateModelPriceHistory(all = false): Promise<number> {
+  const payload = await apiClient.post<{ updated?: number }>('/usage/model-prices/recalculate', { all });
+  return Number(payload?.updated) || 0;
+}
+
 export function formatCompactNumber(value: number): string {
   const num = Number(value);
   if (!Number.isFinite(num)) return '0';
@@ -515,6 +721,17 @@ export function formatUsd(value: number): string {
     maximumFractionDigits: 2,
   });
   return `$${parts}`;
+}
+
+export function formatUsdPrecise(value: number): string {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return '$0.000000';
+
+  const decimals = num !== 0 && Math.abs(num) < 0.000001 ? 8 : 6;
+  return `$${num.toLocaleString(undefined, {
+    minimumFractionDigits: decimals,
+    maximumFractionDigits: decimals,
+  })}`;
 }
 
 const resolveDurationLocale = (locale?: string): string | undefined =>

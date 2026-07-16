@@ -9,6 +9,7 @@ import { ToggleSwitch } from '@/components/ui/ToggleSwitch';
 import {
   IconChevronDown,
   IconChevronUp,
+  IconDownload,
 } from '@/components/ui/icons';
 import { getAuthFileIcon } from '@/features/authFiles/constants';
 import {
@@ -106,6 +107,8 @@ type InspectionSettingsDraft = {
   antigravityDeepProbeEnabled: boolean;
   antigravityDeepProbeModel: string;
   antigravityQuotaMode: AccountInspectionAntigravityQuotaMode;
+  xaiDeepProbeEnabled: boolean;
+  xaiDeepProbeModel: string;
   autoExecuteQuotaLimitDisable: boolean;
   autoExecuteQuotaRecoveryEnable: boolean;
   autoExecuteAccountInvalidAction: AccountInspectionAutoErrorAction;
@@ -114,7 +117,7 @@ type InspectionSettingsDraft = {
 
 type InspectionSettingsDraftField = Exclude<
   keyof InspectionSettingsDraft,
-  'antigravityDeepProbeEnabled' | 'antigravityQuotaMode' | 'autoExecuteQuotaLimitDisable' | 'autoExecuteQuotaRecoveryEnable' | 'autoExecuteAccountInvalidAction' | 'autoExecuteRequestErrorAction'
+  'antigravityDeepProbeEnabled' | 'antigravityQuotaMode' | 'xaiDeepProbeEnabled' | 'autoExecuteQuotaLimitDisable' | 'autoExecuteQuotaRecoveryEnable' | 'autoExecuteAccountInvalidAction' | 'autoExecuteRequestErrorAction'
 >;
 
 type ScheduleDraft = {
@@ -289,11 +292,14 @@ const concatUint8Arrays = (parts: Uint8Array[]) => {
   return output;
 };
 
-const sanitizeZipPathSegment = (value: string) =>
-  value
-    .replace(/[\\/:*?"<>|\x00-\x1f]/g, '_')
-    .replace(/^\.+$/, '_')
-    .trim() || 'unknown';
+const sanitizeZipPathSegment = (value: string) => {
+  const sanitized = value
+    .replace(/[\\/:*?"<>|]/g, '_')
+    .split('')
+    .map((character) => character.charCodeAt(0) <= 0x1f ? '_' : character)
+    .join('');
+  return sanitized.replace(/^\.+$/, '_').trim() || 'unknown';
+};
 
 const getAuthFileZipPath = (entry: AuthFileExportEntry, usedPaths: Set<string>) => {
   const rawName = sanitizeZipPathSegment(entry.name);
@@ -471,48 +477,77 @@ const healthLabelKey: Record<ResultHealthStatus, string> = {
   recoverable: 'monitoring.account_inspection_health_recoverable',
 };
 
-const compactHealthErrorCode = (code: string) => {
-  switch (code) {
-    case 'inspection_http_error':
-      return 'http_error';
-    case 'inspection_probe_error':
-      return 'probe_error';
-    case 'antigravity_deep_probe_error':
-      return 'deep_probe';
-    case 'token_refresh_error':
-      return 'refresh';
-    case 'missing_auth_index':
-      return 'no_index';
-    case 'missing_auth_id':
-      return 'no_auth_id';
-    default:
-      return code;
+const extractHealthHttpStatusCode = (item: AccountInspectionResultItem) => {
+  if (item.statusCode !== null && item.statusCode >= 400) return item.statusCode;
+  const errorText = [item.error, item.deepProbeError, item.tokenRefreshError].filter(Boolean).join(' ');
+  const match = errorText.match(/\bHTTP\s+(\d{3})\b/i) ?? errorText.match(/\bstatus(?:\s+code)?\s*[:=]?\s*(\d{3})\b/i);
+  return match ? Number(match[1]) : null;
+};
+
+const buildHealthStatusCodeText = (item: AccountInspectionResultItem) => {
+  const httpStatusCode = extractHealthHttpStatusCode(item);
+  return httpStatusCode !== null ? String(httpStatusCode) : '';
+};
+
+const buildHealthStatusLabel = (
+  item: AccountInspectionResultItem,
+  healthStatus: ResultHealthStatus,
+  t: ReturnType<typeof useTranslation>['t']
+) => {
+  const label = t(healthLabelKey[healthStatus]);
+  const code = buildHealthStatusCodeText(item);
+  return code ? `${label} · ${code}` : label;
+};
+
+const hasInspectionErrorDetails = (item: AccountInspectionResultItem) => Boolean(
+  item.error
+  || item.errorDetail?.trim()
+  || item.errorCode?.trim()
+  || item.deepProbeError
+  || item.tokenRefreshError
+  || extractHealthHttpStatusCode(item) !== null
+);
+
+const parseInspectionErrorPayload = (value: string): unknown => {
+  const text = value.trim();
+  if (!text || (!text.startsWith('{') && !text.startsWith('['))) return null;
+  try {
+    return JSON.parse(text);
+  } catch {
+    return null;
   }
 };
 
-const formatHealthErrorCodes = (item: AccountInspectionResultItem): Array<{ label: string; title: string }> => {
-  const codes: Array<{ label: string; title: string }> = [];
-  const errorCode = item.errorCode?.trim();
-  if (errorCode) {
-    codes.push({ label: compactHealthErrorCode(errorCode), title: errorCode });
-  }
-  if (item.statusCode !== null && item.statusCode >= 400) {
-    codes.push({ label: `HTTP ${item.statusCode}`, title: `HTTP ${item.statusCode}` });
-    return codes;
-  }
-  const match = item.error.match(/\bHTTP\s+(\d{3})\b/i) ?? item.error.match(/\bstatus(?:\s+code)?\s*[:=]?\s*(\d{3})\b/i);
-  if (match) {
-    codes.push({ label: `HTTP ${match[1]}`, title: `HTTP ${match[1]}` });
-  }
-  return codes;
+const readInspectionErrorMessage = (value: unknown): string => {
+  if (typeof value === 'string') return value.trim();
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return '';
+  const record = value as Record<string, unknown>;
+  const directMessage = readInspectionErrorMessage(record.message);
+  if (directMessage) return directMessage;
+  const nestedError = readInspectionErrorMessage(record.error);
+  if (nestedError) return nestedError;
+  return '';
 };
 
-const deepProbeLabelKey: Record<Exclude<NonNullable<AccountInspectionResultItem['deepProbeStatus']>, ''>, string> = {
-  success: 'monitoring.account_inspection_deep_probe_success',
-  quota: 'monitoring.account_inspection_deep_probe_quota',
-  auth_error: 'monitoring.account_inspection_deep_probe_auth_error',
-  transient_error: 'monitoring.account_inspection_deep_probe_transient_error',
-  skipped: 'monitoring.account_inspection_deep_probe_skipped',
+const buildInspectionErrorPresentation = (item: AccountInspectionResultItem) => {
+  const candidates = [item.error, item.deepProbeError || '', item.tokenRefreshError || '']
+    .map((value) => value.trim())
+    .filter((value, index, values) => Boolean(value) && values.indexOf(value) === index)
+    .sort((left, right) => right.length - left.length);
+  const detailText = item.errorDetail?.trim() || candidates[0] || '';
+  const detailPayload = parseInspectionErrorPayload(detailText);
+  const parsedMessage = readInspectionErrorMessage(detailPayload);
+  const httpStatusCode = extractHealthHttpStatusCode(item);
+  const fallbackSummary = candidates.find((value) => parseInspectionErrorPayload(value) === null) || '';
+  const summary = parsedMessage || fallbackSummary;
+  const normalizedSummary = summary.replace(/\s+/g, ' ').trim();
+  const statusOnlySummary = httpStatusCode !== null && normalizedSummary.toLowerCase() === `http ${httpStatusCode}`.toLowerCase();
+  return {
+    summary: statusOnlySummary ? '' : normalizedSummary,
+    detail: detailPayload === null
+      ? (item.errorDetail?.trim() ? detailText : '')
+      : JSON.stringify(detailPayload, null, 2),
+  };
 };
 
 const resolveResultHealthStatus = (item: AccountInspectionResultItem): ResultHealthStatus => {
@@ -525,6 +560,49 @@ const resolveResultHealthStatus = (item: AccountInspectionResultItem): ResultHea
   if (item.disabled) return 'disabled';
   return 'healthy';
 };
+
+function InspectionErrorDetailsPanel({
+  item,
+  t,
+}: {
+  item: AccountInspectionResultItem;
+  t: ReturnType<typeof useTranslation>['t'];
+}) {
+  const healthStatus = resolveResultHealthStatus(item);
+  const httpStatusCode = extractHealthHttpStatusCode(item);
+  const errorPresentation = buildInspectionErrorPresentation(item);
+  const detailItems = [
+    { label: t('monitoring.account_label'), value: item.fileName },
+    { label: t('monitoring.filter_provider'), value: item.provider },
+    { label: t('monitoring.account_inspection_http_status'), value: httpStatusCode !== null ? String(httpStatusCode) : '' },
+    { label: t('monitoring.account_inspection_error_code'), value: item.errorCode?.trim() || '' },
+  ].filter((detail) => detail.value);
+
+  return (
+    <div className={styles.errorDetailsPanel}>
+      <div className={styles.errorOverview}>
+        <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>
+          {buildHealthStatusLabel(item, healthStatus, t)}
+        </span>
+        {errorPresentation.summary ? <strong>{errorPresentation.summary}</strong> : null}
+      </div>
+      <div className={styles.errorDetailsGrid}>
+        {detailItems.map((detail) => (
+          <div key={detail.label} className={styles.errorDetailItem}>
+            <span>{detail.label}</span>
+            <strong>{detail.value}</strong>
+          </div>
+        ))}
+      </div>
+      {errorPresentation.detail ? (
+        <div className={styles.errorMessageBlock}>
+          <span>{t('monitoring.account_inspection_raw_error_response')}</span>
+          <pre className={styles.errorMessage}>{errorPresentation.detail}</pre>
+        </div>
+      ) : null}
+    </div>
+  );
+}
 
 const ACCOUNT_INVALID_ERROR_STATUSES = new Set([400, 401, 403, 404]);
 const ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET = new Set<string>(ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS);
@@ -914,7 +992,7 @@ const buildInspectionResultsViewState = (items: AccountInspectionResultItem[]): 
 
     if (isSuggestedAction(item) && !item.executed) {
       filterRowCounts.pending += 1;
-      row = pushResultRow(filterRows.pending, item, healthStatus, row);
+      pushResultRow(filterRows.pending, item, healthStatus, row);
       if (item.action === 'delete') actionableActionCounts.delete += 1;
       if (item.action === 'disable') actionableActionCounts.disable += 1;
       if (item.action === 'enable') actionableActionCounts.enable += 1;
@@ -964,14 +1042,6 @@ const INSPECTION_TARGET_OPTIONS = [
   })),
 ] as const;
 
-const RESULT_PROVIDER_OPTIONS = [
-  { value: ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE, labelKey: 'monitoring.filter_all_providers' },
-  ...ACCOUNT_INSPECTION_SUPPORTED_PROVIDERS.map((provider) => ({
-    value: provider,
-    label: resolveProviderDisplayLabel(provider),
-  })),
-] as const;
-
 const AUTO_ERROR_ACTION_OPTIONS: Array<{ value: AccountInspectionAutoErrorAction; labelKey: string }> = [
   { value: 'none', labelKey: 'monitoring.account_inspection_settings_account_error_action_none' },
   { value: 'disable', labelKey: 'monitoring.account_inspection_settings_account_error_action_disable' },
@@ -1011,6 +1081,8 @@ const toSettingsDraft = (settings: AccountInspectionConfigurableSettings): Inspe
   antigravityDeepProbeEnabled: settings.antigravityDeepProbeEnabled,
   antigravityDeepProbeModel: settings.antigravityDeepProbeModel,
   antigravityQuotaMode: settings.antigravityQuotaMode,
+  xaiDeepProbeEnabled: settings.xaiDeepProbeEnabled,
+  xaiDeepProbeModel: settings.xaiDeepProbeModel,
   autoExecuteQuotaLimitDisable: settings.autoExecuteQuotaLimitDisable,
   autoExecuteQuotaRecoveryEnable: settings.autoExecuteQuotaRecoveryEnable,
   autoExecuteAccountInvalidAction: settings.autoExecuteAccountInvalidAction,
@@ -1034,17 +1106,6 @@ const formatActionLabel = (action: AccountInspectionAction, t: ReturnType<typeof
 const formatQuotaRemainingLabel = (value: number | null) => {
   if (value === null) return '--';
   return `${Math.max(0, 100 - value).toFixed(1)}%`;
-};
-
-const shouldShowDeepProbeBadge = (item: AccountInspectionResultItem) =>
-  Boolean(item.deepProbeTriggered && item.deepProbeStatus && item.deepProbeStatus !== 'skipped');
-
-const formatDeepProbeLabel = (
-  item: AccountInspectionResultItem,
-  t: ReturnType<typeof useTranslation>['t']
-) => {
-  if (!item.deepProbeTriggered || !item.deepProbeStatus) return '';
-  return t(deepProbeLabelKey[item.deepProbeStatus] ?? 'monitoring.account_inspection_deep_probe_skipped');
 };
 
 const formatTokenRefreshLabel = (
@@ -1106,23 +1167,6 @@ const formatInspectionVerdictPrimary = (
   }
 };
 
-const formatInspectionVerdictSecondary = (
-  item: AccountInspectionResultItem,
-  t: ReturnType<typeof useTranslation>['t']
-) => {
-  const parts = [formatActionLabel(item.action, t)];
-  if (shouldShowDeepProbeBadge(item)) {
-    const label = formatDeepProbeLabel(item, t);
-    if (label) parts.push(label);
-  }
-  if (item.error) {
-    parts.push(item.error);
-  } else if (item.statusCode !== null && item.statusCode >= 400) {
-    parts.push(`HTTP ${item.statusCode}`);
-  }
-  return parts.join(' · ');
-};
-
 const inspectionToastTone = (healthStatus: ResultHealthStatus): 'success' | 'warning' | 'error' => {
   if (healthStatus === 'healthy' || healthStatus === 'recoverable') return 'success';
   if (healthStatus === 'inspectionError' || healthStatus === 'authInvalid') return 'error';
@@ -1135,9 +1179,8 @@ const formatInspectionResultToast = (
 ) => {
   const healthStatus = resolveResultHealthStatus(item);
   const primary = formatInspectionVerdictPrimary(item, healthStatus, t);
-  const secondary = formatInspectionVerdictSecondary(item, t);
   return {
-    message: secondary ? `${item.fileName}: ${primary} · ${secondary}` : `${item.fileName}: ${primary}`,
+    message: `${item.fileName}: ${primary}`,
     tone: inspectionToastTone(healthStatus),
   };
 };
@@ -1366,6 +1409,8 @@ const sameInspectionSettings = (left: AccountInspectionConfigurableSettings, rig
   left.antigravityDeepProbeEnabled === right.antigravityDeepProbeEnabled &&
   left.antigravityDeepProbeModel === right.antigravityDeepProbeModel &&
   left.antigravityQuotaMode === right.antigravityQuotaMode &&
+  left.xaiDeepProbeEnabled === right.xaiDeepProbeEnabled &&
+  left.xaiDeepProbeModel === right.xaiDeepProbeModel &&
   left.autoExecuteQuotaLimitDisable === right.autoExecuteQuotaLimitDisable &&
   left.autoExecuteQuotaRecoveryEnable === right.autoExecuteQuotaRecoveryEnable &&
   left.autoExecuteAccountInvalidAction === right.autoExecuteAccountInvalidAction &&
@@ -1383,6 +1428,8 @@ const sameSettingsDraft = (left: InspectionSettingsDraft, right: InspectionSetti
   left.antigravityDeepProbeEnabled === right.antigravityDeepProbeEnabled &&
   left.antigravityDeepProbeModel === right.antigravityDeepProbeModel &&
   left.antigravityQuotaMode === right.antigravityQuotaMode &&
+  left.xaiDeepProbeEnabled === right.xaiDeepProbeEnabled &&
+  left.xaiDeepProbeModel === right.xaiDeepProbeModel &&
   left.autoExecuteQuotaLimitDisable === right.autoExecuteQuotaLimitDisable &&
   left.autoExecuteQuotaRecoveryEnable === right.autoExecuteQuotaRecoveryEnable &&
   left.autoExecuteAccountInvalidAction === right.autoExecuteAccountInvalidAction &&
@@ -1434,6 +1481,7 @@ type InspectionBackendState = {
   progress: AccountInspectionProgressSnapshot;
   result: AccountInspectionRunResult | null;
   autoExecutionCounts: AutoExecutionCounts;
+  restoredSnapshot: boolean;
 };
 
 type InspectionBackendAction =
@@ -1462,6 +1510,7 @@ const createInspectionBackendState = (settings: AccountInspectionConfigurableSet
   progress: createIdleAccountInspectionProgressSnapshot(),
   result: null,
   autoExecutionCounts: emptyAutoExecutionCounts(),
+  restoredSnapshot: false,
 });
 
 const applyBackendViewState = (
@@ -1477,6 +1526,7 @@ const applyBackendViewState = (
   nextState = withChanged(nextState, 'autoExecutionCounts', viewState.autoExecutionCounts, sameAutoExecutionCounts);
   nextState = withChanged(nextState, 'progress', viewState.progress, sameProgressSnapshot);
   nextState = withChanged(nextState, 'runStatus', viewState.runStatus, sameRunStatus);
+  nextState = withChanged(nextState, 'restoredSnapshot', viewState.restoredSnapshot, Object.is);
   if (viewState.logs) {
     nextState = withChanged(nextState, 'logs', viewState.logs, Object.is);
   }
@@ -1522,6 +1572,7 @@ const inspectionBackendReducer = (
         ...state,
         result: null,
         runStatus: 'running',
+        restoredSnapshot: false,
         autoExecutionCounts: emptyAutoExecutionCounts(),
         progress: {
           ...createIdleAccountInspectionProgressSnapshot(),
@@ -1583,8 +1634,10 @@ export function AccountInspectionPage() {
     progress,
     result,
     autoExecutionCounts,
+    restoredSnapshot,
   } = backendState;
   const [isSettingsModalOpen, setIsSettingsModalOpen] = useState(false);
+  const [selectedErrorResult, setSelectedErrorResult] = useState<AccountInspectionResultItem | null>(null);
   const [scheduleLoading, setScheduleLoading] = useState(false);
   const [logsCollapsed, setLogsCollapsed] = useState(false);
   const [resultFilter, setResultFilter] = useState<ResultFilter>('accountInvalid');
@@ -1920,7 +1973,11 @@ export function AccountInspectionPage() {
     try {
       const response = await authFilesApi.list();
       const files = Array.isArray(response.files)
-        ? response.files.filter(isInspectableAccountInspectionAuthFile)
+        ? response.files.filter((file) =>
+            isInspectableAccountInspectionAuthFile(file) &&
+            (selectedAssetProvider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE ||
+              resolveAuthProvider(file) === selectedAssetProvider)
+          )
         : [];
       const downloadableFiles = files.filter((file) => typeof file.name === 'string' && file.name.trim());
       const entries = await mapWithConcurrency(
@@ -1948,14 +2005,17 @@ export function AccountInspectionPage() {
 
       const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
       const archive = await buildZipArchive(entries);
-      downloadBlobFile(`auth-files-export-${timestamp}.zip`, archive);
+      const providerSuffix = selectedAssetProvider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
+        ? ''
+        : `-${selectedAssetProvider}`;
+      downloadBlobFile(`auth-files-export${providerSuffix}-${timestamp}.zip`, archive);
       showNotification(t('monitoring.account_inspection_auth_files_export_success', { count: entries.length }), 'success');
     } catch (error) {
       showNotification(error instanceof Error ? error.message : String(error || t('common.unknown_error')), 'error');
     } finally {
       setExportingAuthFiles(false);
     }
-  }, [connectionStatus, showNotification, t]);
+  }, [connectionStatus, selectedAssetProvider, showNotification, t]);
 
   const handlePauseInspection = useCallback(() => {
     if (runStatus !== 'running') return;
@@ -1977,6 +2037,10 @@ export function AccountInspectionPage() {
 
   const executeItems = useCallback(
     async (items: AccountInspectionResultItem[]) => {
+      if (restoredSnapshot) {
+        showNotification(t('monitoring.account_inspection_restored_snapshot_action_blocked'), 'warning');
+        return;
+      }
       const currentResult = result;
       if (!currentResult) return;
       const targets = items.filter(isSuggestedAction);
@@ -2028,7 +2092,7 @@ export function AccountInspectionPage() {
         setExecuting(false);
       }
     },
-    [appendLog, applyBackendResponse, currentInspectionDetailOptions, loadAuthFiles, result, showNotification, t]
+    [appendLog, applyBackendResponse, currentInspectionDetailOptions, loadAuthFiles, restoredSnapshot, result, showNotification, t]
   );
 
   const allResults = useMemo(
@@ -2149,6 +2213,10 @@ export function AccountInspectionPage() {
 
   const handleRecheckSingle = useCallback(
     async (item: AccountInspectionResultItem) => {
+      if (restoredSnapshot) {
+        showNotification(t('monitoring.account_inspection_restored_snapshot_action_blocked'), 'warning');
+        return;
+      }
       if (connectionStatus !== 'connected') {
         showNotification(t('notification.connection_required'), 'warning');
         return;
@@ -2173,11 +2241,15 @@ export function AccountInspectionPage() {
         setRecheckingKey(null);
       }
     },
-    [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, showNotification, t]
+    [appendLog, applyBackendResponse, connectionStatus, currentInspectionDetailOptions, restoredSnapshot, showNotification, t]
   );
 
   const refreshTokenSingle = useCallback(
     async (item: AccountInspectionResultItem) => {
+      if (restoredSnapshot) {
+        showNotification(t('monitoring.account_inspection_restored_snapshot_action_blocked'), 'warning');
+        return;
+      }
       setRefreshingTokenKey(item.key);
       setLogsCollapsed(false);
       appendLog('info', t('monitoring.account_inspection_refresh_token_started', {
@@ -2198,7 +2270,7 @@ export function AccountInspectionPage() {
         setRefreshingTokenKey(null);
       }
     },
-    [appendLog, applyBackendResponse, currentInspectionDetailOptions, i18n.language, loadAuthFiles, showNotification, t]
+    [appendLog, applyBackendResponse, currentInspectionDetailOptions, i18n.language, loadAuthFiles, restoredSnapshot, showNotification, t]
   );
 
   const handleRefreshTokenSingle = useCallback(
@@ -2266,8 +2338,11 @@ export function AccountInspectionPage() {
   }, [authFileStats, selectedAssetProvider]);
 
   const selectedAssetLabel = selectedAssetProvider === 'all'
-    ? t('monitoring.account_inspection_account_summary_title')
+    ? t('monitoring.filter_all_accounts')
     : resolveProviderDisplayLabel(selectedAssetProvider);
+  const exportAuthFilesLabel = selectedAssetProvider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE
+    ? t('monitoring.account_inspection_auth_files_export_all')
+    : t('monitoring.account_inspection_auth_files_export_selected', { provider: selectedAssetLabel });
 
   const accountAssetCards = useMemo<SummaryCard[]>(() => [
     {
@@ -2395,12 +2470,29 @@ export function AccountInspectionPage() {
     { key: 'highAvailable', label: t('monitoring.account_inspection_high_available') },
   ], [t]);
   const resultProviderOptions = useMemo(
-    () => RESULT_PROVIDER_OPTIONS.map((option) => ({
-      value: option.value,
-      label: 'labelKey' in option ? t(option.labelKey) : option.label,
-    })),
-    [t]
+    () => {
+      const providers = new Set<string>();
+      authFileStats.providers.forEach((provider) => providers.add(provider.provider));
+      result?.results.forEach((item) => {
+        const provider = item.provider.trim().toLowerCase();
+        if (ACCOUNT_INSPECTION_SUPPORTED_PROVIDER_SET.has(provider)) providers.add(provider);
+      });
+      return [
+        { value: ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE, label: t('monitoring.filter_all_providers') },
+        ...Array.from(providers).map((provider) => ({
+          value: provider,
+          label: resolveProviderDisplayLabel(provider),
+        })),
+      ];
+    },
+    [authFileStats.providers, result, t]
   );
+
+  useEffect(() => {
+    if (selectedResultProvider === ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE) return;
+    if (resultProviderOptions.some((option) => option.value === selectedResultProvider)) return;
+    setSelectedResultProvider(ACCOUNT_INSPECTION_ALL_PROVIDER_TYPE);
+  }, [resultProviderOptions, selectedResultProvider]);
   const logLevelOptions = useMemo<Array<{ key: AccountInspectionLogLevel | 'all'; label: string }>>(() => [
     { key: 'all', label: t('monitoring.account_inspection_filter_all') },
     { key: 'success', label: t('monitoring.account_inspection_log_success') },
@@ -2453,6 +2545,13 @@ export function AccountInspectionPage() {
     dispatchBackendState({
       type: 'updateSettingsDraft',
       values: { antigravityDeepProbeEnabled: value },
+    });
+  }, []);
+
+  const handleXAIDeepProbeChange = useCallback((value: boolean) => {
+    dispatchBackendState({
+      type: 'updateSettingsDraft',
+      values: { xaiDeepProbeEnabled: value },
     });
   }, []);
 
@@ -2563,6 +2662,8 @@ export function AccountInspectionPage() {
         antigravityDeepProbeEnabled: settingsDraft.antigravityDeepProbeEnabled,
         antigravityDeepProbeModel: settingsDraft.antigravityDeepProbeModel,
         antigravityQuotaMode: settingsDraft.antigravityQuotaMode,
+        xaiDeepProbeEnabled: settingsDraft.xaiDeepProbeEnabled,
+        xaiDeepProbeModel: settingsDraft.xaiDeepProbeModel,
         autoExecuteQuotaLimitDisable: settingsDraft.autoExecuteQuotaLimitDisable,
         autoExecuteQuotaRecoveryEnable: settingsDraft.autoExecuteQuotaRecoveryEnable,
         autoExecuteAccountInvalidAction: settingsDraft.autoExecuteAccountInvalidAction,
@@ -2592,7 +2693,7 @@ export function AccountInspectionPage() {
     } finally {
       setScheduleLoading(false);
     }
-  }, [applyBackendResponse, parseIntegerInRange, scheduleDraft.enabled, scheduleDraft.intervalMinutes, schedule?.nextRunAt, settingsDraft, showNotification, t]);
+  }, [applyBackendResponse, inspectionSettings.autoExecuteConfirmations, parseIntegerInRange, scheduleDraft.enabled, scheduleDraft.intervalMinutes, schedule?.nextRunAt, settingsDraft, showNotification, t]);
 
   const handleResetSettings = useCallback(() => {
     clearAccountInspectionConfigurableSettings();
@@ -2634,17 +2735,6 @@ export function AccountInspectionPage() {
             <h1 className={styles.heroTitle}>{t('monitoring.account_inspection_title')}</h1>
             <p className={styles.heroSubtitle}>{t('monitoring.account_inspection_desc')}</p>
           </div>
-          <div className={styles.heroActions}>
-            <Button
-              variant="secondary"
-              className={styles.heroActionButton}
-              onClick={handleExportAuthFiles}
-              loading={exportingAuthFiles}
-              disabled={exportingAuthFiles || connectionStatus !== 'connected'}
-            >
-              {t('monitoring.account_inspection_auth_files_export')}
-            </Button>
-          </div>
         </div>
 
         <div className={styles.assetOverviewGrid}>
@@ -2674,7 +2764,19 @@ export function AccountInspectionPage() {
                 <h3>{t('monitoring.account_inspection_provider_distribution_title')}</h3>
                 <p>{authFileStatsReady ? t('monitoring.account_inspection_provider_distribution_desc', { count: authFileStats.providerCount }) : t('common.loading')}</p>
               </div>
-              <span>{selectedAssetLabel}</span>
+              <Button
+                variant="secondary"
+                size="sm"
+                className={styles.providerDistributionSelection}
+                onClick={handleExportAuthFiles}
+                loading={exportingAuthFiles}
+                disabled={exportingAuthFiles || connectionStatus !== 'connected'}
+                aria-label={exportAuthFilesLabel}
+                title={exportAuthFilesLabel}
+              >
+                {exportingAuthFiles ? null : <IconDownload size={15} />}
+                {exportAuthFilesLabel}
+              </Button>
             </div>
             <div className={styles.providerSelectorList}>
               <button
@@ -2687,16 +2789,23 @@ export function AccountInspectionPage() {
                 <div>
                   <span className={styles.providerSelectorTitle}>
                     <span className={styles.providerLogoFallback} aria-hidden="true">Σ</span>
-                    <strong>{t('monitoring.account_inspection_account_summary_title')}</strong>
+                    <strong>{t('monitoring.filter_all_accounts')}</strong>
                   </span>
-                  <span>{authFileStatsReady ? `${authFileStats.total} ${t('monitoring.account_inspection_account_total')}` : t('common.loading')}</span>
+                  <span>{authFileStatsReady ? `${authFileStats.total} ${t('monitoring.account_inspection_account_total')} · ${authFileStats.highAvailable} ${t('monitoring.account_inspection_high_available')}` : t('common.loading')}</span>
                 </div>
                 <span aria-hidden="true">
-                  <i style={{ '--bar-width': authFileStatsReady && authFileStats.total > 0 ? '100%' : '0%', '--bar-color': DONUT_COLORS[0] } as CSSProperties} />
+                  <i
+                    style={{
+                      '--bar-width': authFileStatsReady && authFileStats.total > 0
+                        ? `${Math.min(Math.max((authFileStats.highAvailable / authFileStats.total) * 100, 0), 100)}%`
+                        : '0%',
+                      '--bar-color': DONUT_COLORS[0],
+                    } as CSSProperties}
+                  />
                 </span>
               </button>
               {authFileStats.providers.length > 0 ? authFileStats.providers.map((provider, index) => {
-                const share = authFileStats.total > 0 ? provider.total / authFileStats.total : 0;
+                const highAvailableShare = provider.total > 0 ? provider.highAvailable / provider.total : 0;
                 return (
                   <button
                     type="button"
@@ -2718,7 +2827,7 @@ export function AccountInspectionPage() {
                       <span>{`${provider.total} ${t('monitoring.account_inspection_account_total')} · ${provider.highAvailable} ${t('monitoring.account_inspection_high_available')}`}</span>
                     </div>
                     <span aria-hidden="true">
-                      <i style={{ '--bar-width': `${Math.min(Math.max(share * 100, provider.total > 0 ? 1 : 0), 100)}%`, '--bar-color': DONUT_COLORS[index % DONUT_COLORS.length] } as CSSProperties} />
+                      <i style={{ '--bar-width': `${Math.min(Math.max(highAvailableShare * 100, 0), 100)}%`, '--bar-color': DONUT_COLORS[index % DONUT_COLORS.length] } as CSSProperties} />
                     </span>
                   </button>
                 );
@@ -2727,6 +2836,13 @@ export function AccountInspectionPage() {
           </Card>
         </div>
       </Card>
+
+      {restoredSnapshot ? (
+        <div className={styles.restoredSnapshotNotice} role="status">
+          <strong>{t('monitoring.account_inspection_restored_snapshot_title')}</strong>
+          <span>{t('monitoring.account_inspection_restored_snapshot_desc')}</span>
+        </div>
+      ) : null}
 
       <section className={styles.operationSection}>
         <div className={styles.operationModuleHeader}>
@@ -2894,7 +3010,7 @@ export function AccountInspectionPage() {
                         size="sm"
                         onClick={handleExecutePlanned}
                         loading={executing || loadingFullInspectionDetails}
-                        disabled={!result || runStatus === 'running' || executing || loadingFullInspectionDetails || pendingActionCount === 0}
+                        disabled={restoredSnapshot || !result || runStatus === 'running' || executing || loadingFullInspectionDetails || pendingActionCount === 0}
                       >
                         {executing || loadingFullInspectionDetails ? t('monitoring.account_inspection_executing') : t('monitoring.account_inspection_execute_now')}
                       </Button>
@@ -2926,6 +3042,11 @@ export function AccountInspectionPage() {
                 options={resultProviderOptions}
                 onChange={setSelectedResultProvider}
                 ariaLabel={t('monitoring.account_inspection_filter_provider')}
+                className={styles.resultProviderSelect}
+                triggerClassName={styles.resultProviderSelectTrigger}
+                dropdownClassName={styles.resultProviderSelectDropdown}
+                fullWidth={false}
+                size="sm"
               />
               <div className={styles.resultFilterControl}>
                 {resultFilterTabs.map((tab) => (
@@ -2974,20 +3095,26 @@ export function AccountInspectionPage() {
                   {filteredResultRows.length > 0 ? (
                     visibleResultRows.map(({ item, healthStatus, manualActions }) => {
                       const tokenRefreshDetail = formatTokenRefreshDetail(item, i18n.language, t);
-                      const healthErrorCodes = formatHealthErrorCodes(item);
+                      const healthStatusLabel = buildHealthStatusLabel(item, healthStatus, t);
+                      const showErrorDetails = hasInspectionErrorDetails(item);
                       return (
                         <tr key={item.key}>
                           <td><div className={styles.primaryCell}><span>{item.fileName}</span><small>{item.provider}</small></div></td>
                           <td>
                             <div className={styles.healthCell}>
-                              <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>{t(healthLabelKey[healthStatus])}</span>
-                              {healthErrorCodes.length > 0 ? (
-                                <span className={styles.healthCodeList}>
-                                  {healthErrorCodes.map((code) => (
-                                    <span key={code.title} className={styles.healthCode} title={code.title}>{code.label}</span>
-                                  ))}
-                                </span>
-                              ) : null}
+                              {showErrorDetails ? (
+                                <button
+                                  type="button"
+                                  className={styles.healthErrorButton}
+                                  onClick={() => setSelectedErrorResult(item)}
+                                  title={t('monitoring.account_inspection_error_details_click_hint')}
+                                  aria-label={t('monitoring.account_inspection_error_details_click_hint')}
+                                >
+                                  <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>{healthStatusLabel}</span>
+                                </button>
+                              ) : (
+                                <span className={`${styles.healthBadge} ${healthToneClass[healthStatus]}`}>{healthStatusLabel}</span>
+                              )}
                             </div>
                           </td>
                           <td><span className={item.disabled ? styles.stateTextMuted : styles.stateTextGood}>{formatCurrentStateLabel(item, t)}</span></td>
@@ -3004,7 +3131,6 @@ export function AccountInspectionPage() {
                           <td>
                             <div className={styles.verdictCell}>
                               <strong>{formatInspectionVerdictPrimary(item, healthStatus, t)}</strong>
-                              <span>{formatInspectionVerdictSecondary(item, t)}</span>
                             </div>
                           </td>
                           <td className={styles.operationCell}>
@@ -3014,16 +3140,16 @@ export function AccountInspectionPage() {
                                 variant="secondary"
                                 onClick={() => void handleRefreshTokenSingle(item)}
                                 loading={refreshingTokenKey === item.key}
-                                disabled={runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}
+                                disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}
                                 title={t('monitoring.account_inspection_refresh_token_tooltip')}
                               >
                                 {t('monitoring.account_inspection_refresh_token_action')}
                               </Button>
-                              <Button size="sm" variant="secondary" onClick={() => void handleRecheckSingle(item)} loading={recheckingKey === item.key} disabled={runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}>
+                              <Button size="sm" variant="secondary" onClick={() => void handleRecheckSingle(item)} loading={recheckingKey === item.key} disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}>
                                 {t('monitoring.account_inspection_recheck_account')}
                               </Button>
                               {manualActions.map((action) => (
-                                <Button key={action} size="sm" variant={action === 'delete' ? 'danger' : 'secondary'} onClick={() => handleExecuteSingle(item, action)} disabled={runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}>
+                                <Button key={action} size="sm" variant={action === 'delete' ? 'danger' : 'secondary'} onClick={() => handleExecuteSingle(item, action)} disabled={restoredSnapshot || runStatus === 'running' || executing || recheckingKey !== null || refreshingTokenKey !== null}>
                                   {formatActionLabel(action, t)}
                                 </Button>
                               ))}
@@ -3148,6 +3274,25 @@ export function AccountInspectionPage() {
           )}
         </Card>
       </div>
+
+      <Modal
+        open={Boolean(selectedErrorResult)}
+        onClose={() => setSelectedErrorResult(null)}
+        title={t('monitoring.account_inspection_error')}
+        width={720}
+        className={styles.errorModal}
+        footer={(
+          <div className={styles.errorModalActions}>
+            <Button variant="primary" size="sm" onClick={() => setSelectedErrorResult(null)}>
+              {t('common.close')}
+            </Button>
+          </div>
+        )}
+      >
+        {selectedErrorResult ? (
+          <InspectionErrorDetailsPanel item={selectedErrorResult} t={t} />
+        ) : null}
+      </Modal>
 
       <Modal
         open={isSettingsModalOpen}
@@ -3390,6 +3535,27 @@ export function AccountInspectionPage() {
                       value={settingsDraft.antigravityDeepProbeModel}
                       onChange={(event) => handleSettingsDraftChange('antigravityDeepProbeModel', event.target.value)}
                       disabled={!settingsDraft.antigravityDeepProbeEnabled}
+                    />
+                  </div>
+                </div>
+                <div className={styles.settingsFocusCard}>
+                  <div className={styles.settingsPolicyControl}>
+                    <ToggleSwitch
+                      checked={settingsDraft.xaiDeepProbeEnabled}
+                      onChange={handleXAIDeepProbeChange}
+                      label={t('monitoring.account_inspection_settings_xai_deep_probe_label')}
+                      ariaLabel={t('monitoring.account_inspection_settings_xai_deep_probe_label')}
+                      labelPosition="left"
+                    />
+                  </div>
+                  <span>{t('monitoring.account_inspection_settings_xai_deep_probe_hint')}</span>
+                  <div className={!settingsDraft.xaiDeepProbeEnabled ? styles.settingsMutedField : undefined}>
+                    <Input
+                      label={t('monitoring.account_inspection_settings_xai_deep_probe_model_label')}
+                      hint={t('monitoring.account_inspection_settings_xai_deep_probe_model_hint')}
+                      value={settingsDraft.xaiDeepProbeModel}
+                      onChange={(event) => handleSettingsDraftChange('xaiDeepProbeModel', event.target.value)}
+                      disabled={!settingsDraft.xaiDeepProbeEnabled}
                     />
                   </div>
                 </div>

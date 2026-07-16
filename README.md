@@ -48,7 +48,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 - 构建与 upstream 平台和打包格式一致的 Pro 二进制 release 资产。
 - 内嵌 SQLite usage service。
 - 暴露 `/v0/management/usage` 系列 API，包括状态、增量事件轮询和 SSE 流。
-- 支持 usage JSONL/NDJSON 导入导出，包含 usage events、模型价格、quota cache 和账号巡检调度。
+- 支持 usage JSONL/NDJSON 导入导出，包含 usage events、模型价格、quota cache、账号巡检调度和最近一次巡检结果快照。
 - 支持 WebDAV usage 备份恢复。
 - 支持 SQLite-backed quota cache。
 - 支持模型价格持久化。
@@ -118,6 +118,7 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 /v0/management/usage/stream
 /v0/management/usage/export
 /v0/management/usage/import
+/v0/management/usage/reset
 /v0/management/usage/quota-cache
 /v0/management/usage/model-prices
 /v0/management/usage/settings
@@ -134,6 +135,8 @@ CLIProxyAPI Pro 是对两个 upstream 项目的最小化定制层集合：
 请求监控会保存 TTFT、HTTP 状态码、结构化错误、reasoning effort 和 service tier 等诊断字段，并提供 `/usage/aggregates` 服务端聚合接口。管理端使用事件 ID 进行增量去重，通过 SQLite 写入通知驱动 SSE，断线后按 cursor 追平；趋势和排行优先使用服务端聚合，后台标签页暂停实时渲染。`/usage/status` 会返回最近 dead letter 样本，样本会做敏感字段脱敏。
 
 账号巡检只由后端执行。管理端负责配置调度、启动和控制巡检、轮询状态/进度/结果，通过 WebSocket/WSS 接收日志和实时状态，并确认手动操作。后端自动动作支持连续确认门槛，quota cache 会记录解析器版本和返回结构 hash，便于上游字段变化时排查。
+
+管理端新增一级“路由策略”页面，统一配置 upstream 路由、会话粘性、重试、账号切换、冷却和配额回退，并为 Antigravity、xAI、Codex、Gemini CLI、Gemini、Gemini Interactions、Vertex AI、AI Studio、Claude 和 Kimi 提供按 HTTP 状态码触发的请求保护策略。提供商保护只显示当前已有 API 配置或凭据的提供商。保护功能默认关闭；可先使用 `observe` 模式观察命中情况，再切换到 `enforce` 自动禁用。自动解除只作用于本策略禁用的账号，不会覆盖用户手动禁用状态。
 
 后端巡检时，如果认证记录本来已经进入正常刷新窗口，会在配额/账号探测前尝试刷新 token。巡检刷新路径会跳过 API key 账号、未到刷新窗口的账号，以及仍受 `NextRefreshAfter` 限制的账号；disabled 账号允许刷新。刷新成功后使用刷新后的 auth 继续探测；刷新失败时保留该账号，并跳过该账号本次探测。
 
@@ -288,11 +291,12 @@ core 镜像默认使用：
 
 - usage SQLite 数据库：`usage.sqlite`
 - 账号巡检调度文件：`account-inspection-schedule.json`
+- 最近一次账号巡检结果快照：`account-inspection-snapshot.json`
 - quota cache
 - model prices
 - monitoring settings
 
-Usage 导入导出会使用 NDJSON 元数据记录保存模型价格、quota cache、监控设置和账号巡检调度，因此 WebDAV 备份恢复可以随 usage events 一起恢复监控相关状态。监控日志保留会在每天服务器本地时间 02:00 自动清理，保存设置时也会立即清理一次；WebDAV 备份可单独设置保留天数，成功备份后会删除过期的 `usage-export-*.jsonl` 文件。
+Usage 导入导出会使用 NDJSON 元数据记录保存模型价格、quota cache、监控设置、账号巡检调度和最近一次已结束的巡检结果快照，因此 WebDAV 备份恢复可以随 usage events 一起恢复监控相关状态。恢复的巡检快照用于迁移和问题追溯，默认只读；发起新的完整巡检后才允许重检、刷新令牌或执行账号变更。巡检日志不进入快照。监控日志保留会在每天服务器本地时间 02:00 自动清理，保存设置时也会立即清理一次；WebDAV 备份可单独设置保留天数，成功备份后会删除过期的 `usage-export-*.jsonl` 文件。
 
 建议在生产环境中为该目录配置持久化 volume。
 

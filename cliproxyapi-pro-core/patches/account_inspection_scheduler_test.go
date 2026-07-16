@@ -4,11 +4,14 @@ import (
 	"context"
 	"encoding/base64"
 	"encoding/json"
+	"errors"
 	"math"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/router-for-me/CLIProxyAPI/v6/internal/config"
 	coreauth "github.com/router-for-me/CLIProxyAPI/v6/sdk/cliproxy/auth"
@@ -232,6 +235,99 @@ func TestHealthCountsLockedRebuildsStaleCache(t *testing.T) {
 	}
 	if scheduler.healthCounts != counts {
 		t.Fatalf("scheduler healthCounts cache = %+v, want %+v", scheduler.healthCounts, counts)
+	}
+}
+
+func TestAccountInspectionResultSnapshotPersistsAndRestoresReadOnly(t *testing.T) {
+	snapshotPath := filepath.Join(t.TempDir(), "account-inspection-snapshot.json")
+	settings := defaultAccountInspectionSettings()
+	settings.TargetType = "xai"
+	result := testInspectionProviderResult("xai-1", "xai", accountInspectionActionKeep, false, testStatusCode(502), false, "upstream error")
+	result.ErrorDetail = `{"error":{"message":"raw upstream response"}}`
+
+	source := &accountInspectionScheduler{
+		snapshotPath:    snapshotPath,
+		lastRunSettings: settings,
+		status: accountInspectionStatus{
+			State:          accountInspectionStateCompleted,
+			LastStartedAt:  1000,
+			LastFinishedAt: 2000,
+			Summary:        accountInspectionSummary{TotalFiles: 1, ProbeSetCount: 1, SampledCount: 1, ErrorCount: 1},
+			Results:        []accountInspectionResult{result},
+		},
+	}
+	if err := os.WriteFile(snapshotPath, []byte("{}\n"), 0o644); err != nil {
+		t.Fatalf("os.WriteFile(existing snapshot) error = %v", err)
+	}
+	if err := source.saveResultSnapshotLocked(); err != nil {
+		t.Fatalf("saveResultSnapshotLocked() error = %v", err)
+	}
+	info, err := os.Stat(snapshotPath)
+	if err != nil {
+		t.Fatalf("os.Stat(snapshot) error = %v", err)
+	}
+	if got := info.Mode().Perm(); got != 0o600 {
+		t.Fatalf("snapshot mode = %o, want 600", got)
+	}
+
+	restored := &accountInspectionScheduler{snapshotPath: snapshotPath}
+	if err := restored.loadResultSnapshot(); err != nil {
+		t.Fatalf("loadResultSnapshot() error = %v", err)
+	}
+	if !restored.status.RestoredSnapshot {
+		t.Fatal("restored snapshot is not marked read-only")
+	}
+	if restored.lastRunSettings.TargetType != "xai" {
+		t.Fatalf("restored target type = %q, want xai", restored.lastRunSettings.TargetType)
+	}
+	if len(restored.status.Results) != 1 || restored.status.Results[0].ErrorDetail != result.ErrorDetail {
+		t.Fatalf("restored results = %+v, want original error detail", restored.status.Results)
+	}
+	if len(restored.status.Logs) != 0 {
+		t.Fatalf("restored logs = %+v, want none", restored.status.Logs)
+	}
+
+	if _, err := restored.inspectOne(context.Background(), accountInspectionActionItem{}); !errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
+		t.Fatalf("inspectOne() error = %v, want read-only error", err)
+	}
+	if _, err := restored.refreshTokenNow(context.Background(), accountInspectionActionItem{}); !errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
+		t.Fatalf("refreshTokenNow() error = %v, want read-only error", err)
+	}
+	if _, err := restored.executeManualActions(context.Background(), nil); !errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
+		t.Fatalf("executeManualActions() error = %v, want read-only error", err)
+	}
+}
+
+func TestAccountInspectionSnapshotExportKeepsLastFinishedSnapshotDuringRun(t *testing.T) {
+	snapshotPath := filepath.Join(t.TempDir(), "account-inspection-snapshot.json")
+	scheduler := &accountInspectionScheduler{
+		snapshotPath:    snapshotPath,
+		lastRunSettings: defaultAccountInspectionSettings(),
+		status: accountInspectionStatus{
+			State:          accountInspectionStateCompleted,
+			LastStartedAt:  1000,
+			LastFinishedAt: 2000,
+			Results:        []accountInspectionResult{testInspectionResult("finished", accountInspectionActionKeep, false, nil, false, "")},
+		},
+	}
+	if err := scheduler.saveResultSnapshotLocked(); err != nil {
+		t.Fatalf("saveResultSnapshotLocked() error = %v", err)
+	}
+	scheduler.status = accountInspectionStatus{State: accountInspectionStateRunning, LastStartedAt: 3000}
+
+	raw, ok, err := scheduler.exportResultSnapshot()
+	if err != nil {
+		t.Fatalf("exportResultSnapshot() error = %v", err)
+	}
+	if !ok {
+		t.Fatal("exportResultSnapshot() ok = false, want previous finished snapshot")
+	}
+	snapshot, err := decodeAccountInspectionResultSnapshot(raw)
+	if err != nil {
+		t.Fatalf("decodeAccountInspectionResultSnapshot() error = %v", err)
+	}
+	if snapshot.LastFinishedAt != 2000 || len(snapshot.Results) != 1 || snapshot.Results[0].Key != "finished" {
+		t.Fatalf("exported snapshot = %+v, want previous finished run", snapshot)
 	}
 }
 
@@ -1049,5 +1145,240 @@ func TestXAIBillingURLMatchesUpstreamQuotaConfig(t *testing.T) {
 	}
 	if got := xaiBillingWeeklyURL(); got != "https://cli-chat-proxy.grok.com/v1/billing?format=credits" {
 		t.Fatalf("xaiBillingWeeklyURL() = %q, want upstream weekly billing endpoint", got)
+	}
+}
+
+func TestXAIDeepProbeDefaultsAndNormalization(t *testing.T) {
+	defaults := defaultAccountInspectionSettings()
+	if defaults.XAIDeepProbeEnabled {
+		t.Fatal("xAI deep probe should be disabled by default")
+	}
+	if defaults.XAIDeepProbeModel != "grok-4.5" {
+		t.Fatalf("default xAI deep probe model = %q, want grok-4.5", defaults.XAIDeepProbeModel)
+	}
+
+	normalized := normalizeAccountInspectionSchedule(accountInspectionSchedule{Settings: accountInspectionSettings{
+		XAIDeepProbeEnabled: true,
+		XAIDeepProbeModel:   "   ",
+	}})
+	if !normalized.Settings.XAIDeepProbeEnabled || normalized.Settings.XAIDeepProbeModel != "grok-4.5" {
+		t.Fatalf("normalized xAI deep probe settings = enabled:%v model:%q", normalized.Settings.XAIDeepProbeEnabled, normalized.Settings.XAIDeepProbeModel)
+	}
+}
+
+func TestXAIResponsesURLUsesConfiguredBaseURL(t *testing.T) {
+	if got := xaiResponsesURL(nil); got != "https://api.x.ai/v1/responses" {
+		t.Fatalf("xaiResponsesURL(nil) = %q", got)
+	}
+	auth := &coreauth.Auth{Attributes: map[string]string{"base_url": "https://xai.example/v1/"}}
+	if got := xaiResponsesURL(auth); got != "https://xai.example/v1/responses" {
+		t.Fatalf("xaiResponsesURL(custom) = %q", got)
+	}
+}
+
+func TestBuildXAIDeepProbeBodyUsesMinimalResponsesRequest(t *testing.T) {
+	var payload map[string]any
+	if err := json.Unmarshal([]byte(buildXAIDeepProbeBody(" grok-4.3 ")), &payload); err != nil {
+		t.Fatalf("buildXAIDeepProbeBody() JSON error = %v", err)
+	}
+	if payload["model"] != "grok-4.3" || payload["input"] != "ping" || payload["stream"] != true || payload["max_output_tokens"] != float64(1) {
+		t.Fatalf("deep probe payload = %#v", payload)
+	}
+}
+
+func TestClassifyXAIDeepProbeResponse(t *testing.T) {
+	tests := []struct {
+		name string
+		resp accountInspectionHTTPResult
+		want accountInspectionDeepProbeStatus
+	}{
+		{
+			name: "completed sse",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusOK, Body: "event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"status\":\"completed\"}}\n\n"},
+			want: accountInspectionDeepProbeSuccess,
+		},
+		{
+			name: "output capped after successful execution",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusOK, Body: `data: {"type":"response.incomplete","response":{"status":"incomplete","incomplete_details":{"reason":"max_output_tokens"}}}` + "\n\n"},
+			want: accountInspectionDeepProbeSuccess,
+		},
+		{
+			name: "free usage exhausted",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusTooManyRequests, Body: `{"code":"subscription:free-usage-exhausted","error":"You've used all the included free usage for now."}`},
+			want: accountInspectionDeepProbeQuota,
+		},
+		{
+			name: "unauthorized",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusUnauthorized, Body: `{"error":{"message":"invalid token"}}`},
+			want: accountInspectionDeepProbeAuthError,
+		},
+		{
+			name: "content filter incomplete response",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusOK, Body: `data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"content_filter"}}}` + "\n\n"},
+			want: accountInspectionDeepProbeTransientError,
+		},
+		{
+			name: "missing terminal response",
+			resp: accountInspectionHTTPResult{StatusCode: http.StatusOK, Body: "data: {\"type\":\"response.created\"}\n\n"},
+			want: accountInspectionDeepProbeTransientError,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, _ := classifyXAIDeepProbeResponse(tt.resp)
+			if got != tt.want {
+				t.Fatalf("classifyXAIDeepProbeResponse() = %q, want %q", got, tt.want)
+			}
+		})
+	}
+}
+
+func TestRunXAIDeepProbeWithRetryRecoversFromEmptyResponse(t *testing.T) {
+	attempts := 0
+	resp, status, message, err := runXAIDeepProbeWithRetry(context.Background(), 0, 0, func() (accountInspectionHTTPResult, error) {
+		attempts++
+		if attempts == 1 {
+			return accountInspectionHTTPResult{StatusCode: http.StatusOK}, nil
+		}
+		return accountInspectionHTTPResult{
+			StatusCode: http.StatusOK,
+			Body:       `data: {"type":"response.completed","response":{"status":"completed"}}` + "\n\n",
+		}, nil
+	})
+	if err != nil || status != accountInspectionDeepProbeSuccess || message != "" {
+		t.Fatalf("runXAIDeepProbeWithRetry() = resp:%+v status:%q message:%q err:%v, want success", resp, status, message, err)
+	}
+	if attempts != 2 {
+		t.Fatalf("runXAIDeepProbeWithRetry() attempts = %d, want 2", attempts)
+	}
+}
+
+func TestRunXAIDeepProbeWithRetryRecoversFromTransportError(t *testing.T) {
+	attempts := 0
+	_, status, _, err := runXAIDeepProbeWithRetry(context.Background(), 0, 0, func() (accountInspectionHTTPResult, error) {
+		attempts++
+		if attempts == 1 {
+			return accountInspectionHTTPResult{}, errors.New("temporary transport failure")
+		}
+		return accountInspectionHTTPResult{
+			StatusCode: http.StatusOK,
+			Body:       `data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"max_output_tokens"}}}` + "\n\n",
+		}, nil
+	})
+	if err != nil || status != accountInspectionDeepProbeSuccess || attempts != 2 {
+		t.Fatalf("runXAIDeepProbeWithRetry() = status:%q attempts:%d err:%v, want success after 2 attempts", status, attempts, err)
+	}
+}
+
+func TestRunXAIDeepProbeWithRetryDoesNotRetryContentFilter(t *testing.T) {
+	attempts := 0
+	_, status, message, err := runXAIDeepProbeWithRetry(context.Background(), 0, 0, func() (accountInspectionHTTPResult, error) {
+		attempts++
+		return accountInspectionHTTPResult{
+			StatusCode: http.StatusOK,
+			Body:       `data: {"type":"response.incomplete","response":{"incomplete_details":{"reason":"content_filter"}}}` + "\n\n",
+		}, nil
+	})
+	if err != nil || status != accountInspectionDeepProbeTransientError || !strings.Contains(message, "content_filter") {
+		t.Fatalf("runXAIDeepProbeWithRetry() = status:%q message:%q err:%v, want content_filter transient error", status, message, err)
+	}
+	if attempts != 1 {
+		t.Fatalf("runXAIDeepProbeWithRetry() attempts = %d, want 1", attempts)
+	}
+}
+
+func TestAcquireXAIDeepProbeSerializesAndHonorsCancellation(t *testing.T) {
+	scheduler := &accountInspectionScheduler{}
+	releaseFirst, err := scheduler.acquireXAIDeepProbe(context.Background())
+	if err != nil {
+		t.Fatalf("first acquireXAIDeepProbe() error = %v", err)
+	}
+
+	secondAcquired := make(chan func(), 1)
+	secondStarted := make(chan struct{})
+	go func() {
+		close(secondStarted)
+		release, acquireErr := scheduler.acquireXAIDeepProbe(context.Background())
+		if acquireErr == nil {
+			secondAcquired <- release
+		}
+	}()
+	<-secondStarted
+	select {
+	case release := <-secondAcquired:
+		release()
+		releaseFirst()
+		t.Fatal("second xAI deep probe acquired before the first probe released")
+	case <-time.After(50 * time.Millisecond):
+	}
+
+	canceledCtx, cancel := context.WithCancel(context.Background())
+	canceledResult := make(chan error, 1)
+	go func() {
+		_, acquireErr := scheduler.acquireXAIDeepProbe(canceledCtx)
+		canceledResult <- acquireErr
+	}()
+	cancel()
+	select {
+	case acquireErr := <-canceledResult:
+		if !errors.Is(acquireErr, context.Canceled) {
+			releaseFirst()
+			t.Fatalf("canceled acquireXAIDeepProbe() error = %v, want context.Canceled", acquireErr)
+		}
+	case <-time.After(time.Second):
+		releaseFirst()
+		t.Fatal("canceled acquireXAIDeepProbe() did not return")
+	}
+
+	releaseFirst()
+	select {
+	case release := <-secondAcquired:
+		release()
+	case <-time.After(time.Second):
+		t.Fatal("second xAI deep probe did not acquire after release")
+	}
+}
+
+func TestSummarizeInspectionHTTPBodyExtractsCompleteNestedMessage(t *testing.T) {
+	want := strings.TrimSpace(strings.Repeat("capacity unavailable ", 20))
+	body, err := json.Marshal(map[string]any{
+		"error": map[string]any{
+			"code":    http.StatusServiceUnavailable,
+			"message": want,
+			"status":  "UNAVAILABLE",
+		},
+	})
+	if err != nil {
+		t.Fatalf("marshal error payload: %v", err)
+	}
+	if got := summarizeInspectionHTTPBody(string(body)); got != want {
+		t.Fatalf("summarizeInspectionHTTPBody() = %q, want complete nested message %q", got, want)
+	}
+	if got := inspectionHTTPErrorDetail("  " + string(body) + "\n"); got != string(body) {
+		t.Fatalf("inspectionHTTPErrorDetail() = %q, want complete body %q", got, string(body))
+	}
+}
+
+func TestWithInspectionHTTPErrorDetailPreservesCompleteResponse(t *testing.T) {
+	body := `{"error":{"code":"invalid_token","message":"credential rejected"},"request_id":"req-123"}`
+	decision := withInspectionHTTPErrorDetail(
+		authErrorDecision(accountInspectionAccount{}, http.StatusUnauthorized),
+		"  "+body+"\n",
+	)
+	if decision.ErrorDetail != body {
+		t.Fatalf("ErrorDetail = %q, want complete response %q", decision.ErrorDetail, body)
+	}
+	if decision.Action != accountInspectionActionDisable {
+		t.Fatalf("Action = %q, want %q", decision.Action, accountInspectionActionDisable)
+	}
+}
+
+func TestXAIDeepProbeErrorCodeCanBeCleared(t *testing.T) {
+	decision := accountInspectionDecision{DeepProbeStatus: accountInspectionDeepProbeTransientError}
+	if got := accountInspectionDecisionErrorCode("xai", decision, nil); got != "xai_deep_probe_error" {
+		t.Fatalf("xAI deep probe error code = %q", got)
+	}
+	if !isInspectionAuthErrorCode("xai_deep_probe_error") {
+		t.Fatal("xAI deep probe error code should be clearable after recovery")
 	}
 }

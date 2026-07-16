@@ -45,18 +45,23 @@ The embedded service exposes these management routes:
 - `GET /v0/management/usage/stream` — SSE stream for live usage updates.
 - `GET /v0/management/usage/export` — JSONL/NDJSON export.
 - `POST /v0/management/usage/import` — JSONL/NDJSON import.
+- `POST /v0/management/usage/reset` — atomically clear request events and derived statistics while preserving monitoring settings, model prices, quota cache, and backups.
 - `GET /v0/management/usage/status` — service status and record counts.
 - `GET /v0/management/usage/quota-cache` — read quota cache entries or stats.
 - `PUT /v0/management/usage/quota-cache` — write a quota cache entry.
 - `DELETE /v0/management/usage/quota-cache` — delete quota cache entries.
 - `GET /v0/management/usage/model-prices` — read model price settings.
 - `PUT /v0/management/usage/model-prices` — write model price settings.
-- `GET /v0/management/usage/settings` — read monitoring retention and WebDAV backup settings.
-- `PUT /v0/management/usage/settings` — write monitoring retention and WebDAV backup settings.
+- `GET|PUT|DELETE /v0/management/usage/model-price-rules` — manage provider/model rules and context tiers.
+- `POST /v0/management/usage/model-prices/sync` — synchronize observed models from models.dev.
+- `GET /v0/management/usage/model-prices/sync-status` — read synchronization status.
+- `POST /v0/management/usage/model-prices/recalculate` — explicitly recalculate historical costs.
+- `GET /v0/management/usage/settings` — read retention, WebDAV, and model-price synchronization settings.
+- `PUT /v0/management/usage/settings` — write retention, WebDAV, and model-price synchronization settings.
 
-Details returned by `/usage/events` and `/usage/stream` include a stable event `id`, which the management UI uses for incremental deduplication and cursor catch-up. SSE connections are awakened by an in-process notification after SQLite commits, with only a low-frequency keepalive instead of one database poll per connection per second.
+Details returned by `/usage/events` and `/usage/stream` include a stable event `id`, which the management UI uses for incremental deduplication and cursor catch-up. Usage responses also include a persistent `generation`; manual resets and retention cleanup advance it, and SSE emits a `reset` event so open pages replace their complete snapshot. SSE connections are awakened by an in-process notification after SQLite commits, with only a low-frequency keepalive instead of one database poll per connection per second.
 
-`/usage/aggregates` supports `from_ms`, `to_ms`, `interval=minute|hour|day|all`, `group_by=provider,model,endpoint,api_key_hash`, `api_key_hash`, and `timezone_offset_minutes`. Responses also include `latest_id` and `snapshot_at_ms` for freshness tracking.
+`/usage/aggregates` supports `from_ms`, `to_ms`, `interval=minute|hour|day|all`, `group_by=provider,model,endpoint,api_key_hash`, `api_key_hash`, and `timezone_offset_minutes`. Responses include `latest_id`, `snapshot_at_ms`, and event-level `estimatedCost` sums so context tiers are never selected from aggregated token totals.
 
 ### JSONL usage backup and restore
 
@@ -64,12 +69,13 @@ Details returned by `/usage/events` and `/usage/stream` include a stable event `
 
 The export contains usage events and may also include metadata records:
 
-- `model_prices` — persisted model price settings used by the management UI cost view.
+- `model_prices` — legacy base prices plus complete provider/model pricing rules.
 - `quota_cache` — SQLite-backed quota snapshots used by quota cards and account-scoped refresh.
-- `monitoring_settings` — monitoring retention, WebDAV backup settings, and WebDAV backup retention days.
+- `monitoring_settings` — retention, WebDAV backup, and scheduled models.dev synchronization settings.
 - `account_inspection_schedule` — persisted backend account-inspection schedule.
+- `account_inspection_snapshot` — the latest finished inspection result, including run settings, summary, health counts, complete results, and raw error details, but excluding inspection logs.
 
-`/usage/import` accepts the same JSONL format. It reads each line's `record_type` once, imports usage events, restores model prices, restores quota cache entries, restores monitoring settings, and restores the account-inspection schedule when those metadata records are present. Older event-only JSONL files remain compatible.
+`/usage/import` accepts the same JSONL format. It reads each line's `record_type` once, imports usage events, and restores model prices, quota cache entries, monitoring settings, the account-inspection schedule, and the latest inspection-result snapshot when present. A restored result snapshot is read-only until a new full inspection runs. Older event-only JSONL files remain compatible.
 
 Example import response fields:
 
@@ -85,6 +91,8 @@ Example import response fields:
   "quotaCacheRecords": 1,
   "accountInspectionSchedule": true,
   "accountInspectionScheduleRecords": 1,
+  "accountInspectionSnapshot": true,
+  "accountInspectionSnapshotRecords": 1,
   "monitoringSettings": true,
   "monitoringSettingsRecords": 1
 }
@@ -135,6 +143,8 @@ The schedule file defaults to:
 ```
 
 Override it with `ACCOUNT_INSPECTION_SCHEDULE_PATH` if needed.
+
+The latest finished inspection result is persisted separately at `/CLIProxyAPI/usage/account-inspection-snapshot.json` with mode `0600`. A snapshot restored after process restart or usage import is read-only and is replaced when the next full inspection finishes. Override its path with `ACCOUNT_INSPECTION_SNAPSHOT_PATH` if needed.
 
 ### Root redirect and health response
 
@@ -230,6 +240,7 @@ Build args:
 ### Account inspection
 
 - `ACCOUNT_INSPECTION_SCHEDULE_PATH` — optional schedule JSON path. Defaults to `USAGE_DATA_DIR/account-inspection-schedule.json`.
+- `ACCOUNT_INSPECTION_SNAPSHOT_PATH` — optional latest inspection-result snapshot JSON path. Defaults to `USAGE_DATA_DIR/account-inspection-snapshot.json`.
 
 ### WebDAV usage restore
 

@@ -52,6 +52,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 	}
 	apiKey := strings.TrimSpace(record.APIKey)
 	requestID := strings.TrimSpace(requestmeta.GetRequestID(ctx))
+	stream := coreusage.StreamFromContext(ctx)
 	reasoningEffort := strings.TrimSpace(record.ReasoningEffort)
 	if reasoningEffort == "" {
 		reasoningEffort = coreusage.ReasoningEffortFromContext(ctx)
@@ -105,6 +106,7 @@ func (p *usageQueuePlugin) HandleUsage(ctx context.Context, record coreusage.Rec
 		AuthType:        authType,
 		APIKey:          apiKey,
 		RequestID:       requestID,
+		Stream:          stream,
 		ReasoningEffort: reasoningEffort,
 		ServiceTier:     serviceTier,
 	})
@@ -124,6 +126,7 @@ type queuedUsageDetail struct {
 	AuthType        string `json:"auth_type"`
 	APIKey          string `json:"api_key"`
 	RequestID       string `json:"request_id"`
+	Stream          bool   `json:"stream"`
 	ReasoningEffort string `json:"reasoning_effort"`
 	ServiceTier     string `json:"service_tier"`
 }

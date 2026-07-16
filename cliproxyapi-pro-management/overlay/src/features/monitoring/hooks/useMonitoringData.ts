@@ -13,6 +13,7 @@ import {
   extractTotalTokens,
   normalizeAuthIndex,
   type ModelPrice,
+  type UsageCostBreakdown,
   type UsageDetailWithEndpoint,
 } from '@/utils/usage';
 
@@ -330,8 +331,10 @@ export type MonitoringEventRow = {
   errorMessage: string;
   upstreamRequestId: string;
   retryAfter: string;
+  stream: boolean;
   reasoningEffort: string;
   serviceTier: string;
+  costBreakdown: UsageCostBreakdown | null;
   inputTokens: number;
   outputTokens: number;
   reasoningTokens: number;
@@ -1241,8 +1244,10 @@ const buildEventRows = (
       errorMessage: detail.error_message || '',
       upstreamRequestId: detail.upstream_request_id || '',
       retryAfter: detail.retry_after || '',
+      stream: detail.stream === true,
       reasoningEffort: detail.reasoning_effort || '',
       serviceTier: detail.service_tier || '',
+      costBreakdown: detail.cost_breakdown ?? null,
       inputTokens,
       outputTokens,
       reasoningTokens,
@@ -1265,6 +1270,7 @@ const buildEventRows = (
         executorType,
         detail.upstream_request_id,
         detail.retry_after,
+        detail.reasoning_effort,
         authMeta?.planType,
         clientApiKeyIdentity.masked
       ),

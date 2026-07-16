@@ -42,6 +42,8 @@ const (
 	accountInspectionMaxRunDuration         = 30 * time.Minute
 	accountInspectionMaxProviderConcurrency = 2
 	accountInspectionMaxRefreshConcurrency  = 2
+	accountInspectionXAIMinAttempts         = 2
+	accountInspectionXAIRetryDelay          = 300 * time.Millisecond
 	accountInspectionWebSocketWriteTimeout  = 5 * time.Second
 	accountInspectionWebSocketPongWait      = 60 * time.Second
 	accountInspectionWebSocketPingPeriod    = 54 * time.Second
@@ -77,6 +79,8 @@ type accountInspectionSettings struct {
 	AntigravityDeepProbeEnabled     bool                                  `json:"antigravityDeepProbeEnabled"`
 	AntigravityDeepProbeModel       string                                `json:"antigravityDeepProbeModel"`
 	AntigravityQuotaMode            accountInspectionAntigravityQuotaMode `json:"antigravityQuotaMode"`
+	XAIDeepProbeEnabled             bool                                  `json:"xaiDeepProbeEnabled"`
+	XAIDeepProbeModel               string                                `json:"xaiDeepProbeModel"`
 	AutoExecuteQuotaLimitDisable    bool                                  `json:"autoExecuteQuotaLimitDisable"`
 	AutoExecuteQuotaRecoveryEnable  bool                                  `json:"autoExecuteQuotaRecoveryEnable"`
 	AutoExecuteAccountInvalidAction accountInspectionAction               `json:"autoExecuteAccountInvalidAction"`
@@ -112,6 +116,7 @@ type accountInspectionResult struct {
 	UsedPercent           *float64                `json:"usedPercent"`
 	IsQuota               bool                    `json:"isQuota"`
 	Error                 string                  `json:"error"`
+	ErrorDetail           string                  `json:"errorDetail,omitempty"`
 	ErrorCode             string                  `json:"errorCode"`
 	DeepProbeTriggered    bool                    `json:"deepProbeTriggered"`
 	DeepProbeStatus       string                  `json:"deepProbeStatus"`
@@ -205,6 +210,10 @@ const (
 	accountInspectionStateFailed    accountInspectionRunState = "failed"
 )
 
+const accountInspectionResultSnapshotVersion = 1
+
+var errAccountInspectionRestoredSnapshotReadOnly = errors.New("restored account inspection snapshot is read-only; run a new inspection first")
+
 type accountInspectionProgress struct {
 	Total     int `json:"total"`
 	Completed int `json:"completed"`
@@ -213,19 +222,32 @@ type accountInspectionProgress struct {
 }
 
 type accountInspectionStatus struct {
-	State          accountInspectionRunState      `json:"state"`
-	LastStartedAt  int64                          `json:"lastStartedAt"`
-	LastFinishedAt int64                          `json:"lastFinishedAt"`
-	LastError      string                         `json:"lastError"`
-	Progress       accountInspectionProgress      `json:"progress"`
-	Summary        accountInspectionSummary       `json:"summary"`
-	HealthCounts   *accountInspectionHealthCounts `json:"healthCounts,omitempty"`
-	LogsPage       *accountInspectionPageInfo     `json:"logsPage,omitempty"`
-	ResultsPage    *accountInspectionPageInfo     `json:"resultsPage,omitempty"`
-	LogsLimited    bool                           `json:"logsLimited,omitempty"`
-	ResultsLimited bool                           `json:"resultsLimited,omitempty"`
-	Logs           []accountInspectionLogEntry    `json:"logs"`
-	Results        []accountInspectionResult      `json:"results"`
+	State            accountInspectionRunState      `json:"state"`
+	LastStartedAt    int64                          `json:"lastStartedAt"`
+	LastFinishedAt   int64                          `json:"lastFinishedAt"`
+	LastError        string                         `json:"lastError"`
+	Progress         accountInspectionProgress      `json:"progress"`
+	Summary          accountInspectionSummary       `json:"summary"`
+	HealthCounts     *accountInspectionHealthCounts `json:"healthCounts,omitempty"`
+	LogsPage         *accountInspectionPageInfo     `json:"logsPage,omitempty"`
+	ResultsPage      *accountInspectionPageInfo     `json:"resultsPage,omitempty"`
+	LogsLimited      bool                           `json:"logsLimited,omitempty"`
+	ResultsLimited   bool                           `json:"resultsLimited,omitempty"`
+	RestoredSnapshot bool                           `json:"restoredSnapshot,omitempty"`
+	Logs             []accountInspectionLogEntry    `json:"logs"`
+	Results          []accountInspectionResult      `json:"results"`
+}
+
+type accountInspectionResultSnapshot struct {
+	Version        int                           `json:"version"`
+	State          accountInspectionRunState     `json:"state"`
+	LastStartedAt  int64                         `json:"lastStartedAt"`
+	LastFinishedAt int64                         `json:"lastFinishedAt"`
+	LastError      string                        `json:"lastError,omitempty"`
+	Settings       accountInspectionSettings     `json:"settings"`
+	Summary        accountInspectionSummary      `json:"summary"`
+	HealthCounts   accountInspectionHealthCounts `json:"healthCounts"`
+	Results        []accountInspectionResult     `json:"results"`
 }
 
 type accountInspectionPageInfo struct {
@@ -268,16 +290,20 @@ type accountInspectionLogStreamMessage struct {
 type accountInspectionScheduler struct {
 	h                       *Handler
 	path                    string
+	snapshotPath            string
 	trigger                 chan struct{}
 	mu                      sync.Mutex
 	pause                   *sync.Cond
 	cancel                  context.CancelFunc
 	schedule                accountInspectionSchedule
+	lastRunSettings         accountInspectionSettings
 	status                  accountInspectionStatus
 	healthCounts            accountInspectionHealthCounts
 	autoActionConfirmations map[string]int
 	subscribers             map[chan accountInspectionLogStreamMessage]struct{}
 	lastProgressBroadcastAt int64
+	xaiDeepProbeOnce        sync.Once
+	xaiDeepProbeGate        chan struct{}
 }
 
 type accountInspectionAccount struct {
@@ -303,6 +329,7 @@ type accountInspectionDecision struct {
 	UsedPercent     *float64
 	IsQuota         bool
 	Error           string
+	ErrorDetail     string
 	DeepProbeStatus accountInspectionDeepProbeStatus
 	DeepProbeError  string
 }
@@ -353,8 +380,10 @@ func (h *Handler) startAccountInspectionScheduler() {
 	scheduler := schedulerForHandler(h)
 	if scheduler != nil {
 		embeddedusage.SetAccountInspectionScheduleHandlers(scheduler.exportSchedule, scheduler.importSchedule)
+		embeddedusage.SetAccountInspectionSnapshotHandlers(scheduler.exportResultSnapshot, scheduler.importResultSnapshot)
 		go scheduler.loop()
 	}
+	startRoutingPolicyController(h)
 }
 
 func schedulerForHandler(h *Handler) *accountInspectionScheduler {
@@ -370,9 +399,11 @@ func schedulerForHandler(h *Handler) *accountInspectionScheduler {
 }
 
 func newAccountInspectionScheduler(h *Handler) *accountInspectionScheduler {
+	schedulePath := accountInspectionSchedulePath()
 	scheduler := &accountInspectionScheduler{
 		h:                       h,
-		path:                    accountInspectionSchedulePath(),
+		path:                    schedulePath,
+		snapshotPath:            accountInspectionResultSnapshotPath(schedulePath),
 		trigger:                 make(chan struct{}, 1),
 		subscribers:             make(map[chan accountInspectionLogStreamMessage]struct{}),
 		autoActionConfirmations: make(map[string]int),
@@ -383,6 +414,7 @@ func newAccountInspectionScheduler(h *Handler) *accountInspectionScheduler {
 		},
 		status: accountInspectionStatus{State: accountInspectionStateIdle},
 	}
+	scheduler.lastRunSettings = scheduler.schedule.Settings
 	scheduler.pause = sync.NewCond(&scheduler.mu)
 	scheduler.load()
 	return scheduler
@@ -399,6 +431,13 @@ func accountInspectionSchedulePath() string {
 	return filepath.Join(dataDir, "account-inspection-schedule.json")
 }
 
+func accountInspectionResultSnapshotPath(schedulePath string) string {
+	if value := strings.TrimSpace(os.Getenv("ACCOUNT_INSPECTION_SNAPSHOT_PATH")); value != "" {
+		return value
+	}
+	return filepath.Join(filepath.Dir(schedulePath), "account-inspection-snapshot.json")
+}
+
 func defaultAccountInspectionSettings() accountInspectionSettings {
 	return accountInspectionSettings{
 		TargetType:                      accountInspectionProviderAll,
@@ -411,6 +450,8 @@ func defaultAccountInspectionSettings() accountInspectionSettings {
 		AntigravityDeepProbeEnabled:     false,
 		AntigravityDeepProbeModel:       "claude-sonnet-4-6",
 		AntigravityQuotaMode:            accountInspectionAntigravityQuotaModeClaudeGpt,
+		XAIDeepProbeEnabled:             false,
+		XAIDeepProbeModel:               "grok-4.5",
 		AutoExecuteQuotaLimitDisable:    false,
 		AutoExecuteQuotaRecoveryEnable:  false,
 		AutoExecuteAccountInvalidAction: accountInspectionActionNone,
@@ -479,6 +520,10 @@ func normalizeAccountInspectionSchedule(input accountInspectionSchedule) account
 	if settings.AntigravityQuotaMode != accountInspectionAntigravityQuotaModeMaxUsed && settings.AntigravityQuotaMode != accountInspectionAntigravityQuotaModeClaudeGpt {
 		settings.AntigravityQuotaMode = defaults.AntigravityQuotaMode
 	}
+	settings.XAIDeepProbeModel = strings.TrimSpace(settings.XAIDeepProbeModel)
+	if settings.XAIDeepProbeModel == "" {
+		settings.XAIDeepProbeModel = defaults.XAIDeepProbeModel
+	}
 	settings.AutoExecuteAccountInvalidAction = normalizeAccountInspectionAutoAction(settings.AutoExecuteAccountInvalidAction)
 	settings.AutoExecuteRequestErrorAction = normalizeAccountInspectionAutoAction(settings.AutoExecuteRequestErrorAction)
 	input.Settings = settings
@@ -504,15 +549,17 @@ func normalizeAccountInspectionAutoAction(action accountInspectionAction) accoun
 
 func (s *accountInspectionScheduler) load() {
 	raw, err := os.ReadFile(s.path)
-	if err != nil {
-		return
+	if err == nil {
+		var schedule accountInspectionSchedule
+		if err := json.Unmarshal(raw, &schedule); err != nil {
+			log.WithError(err).Warn("failed to load account inspection schedule")
+		} else {
+			s.schedule = normalizeAccountInspectionSchedule(schedule)
+		}
 	}
-	var schedule accountInspectionSchedule
-	if err := json.Unmarshal(raw, &schedule); err != nil {
-		log.WithError(err).Warn("failed to load account inspection schedule")
-		return
+	if err := s.loadResultSnapshot(); err != nil {
+		log.WithError(err).Warn("failed to load account inspection snapshot")
 	}
-	s.schedule = normalizeAccountInspectionSchedule(schedule)
 }
 
 func (s *accountInspectionScheduler) saveLocked() error {
@@ -524,6 +571,159 @@ func (s *accountInspectionScheduler) saveLocked() error {
 		return err
 	}
 	return os.WriteFile(s.path, append(raw, '\n'), 0o600)
+}
+
+func normalizeAccountInspectionSnapshotState(state accountInspectionRunState) accountInspectionRunState {
+	switch state {
+	case accountInspectionStateStopped, accountInspectionStateCompleted, accountInspectionStatePartial, accountInspectionStateFailed:
+		return state
+	default:
+		return accountInspectionStateCompleted
+	}
+}
+
+func decodeAccountInspectionResultSnapshot(raw []byte) (accountInspectionResultSnapshot, error) {
+	var snapshot accountInspectionResultSnapshot
+	if err := json.Unmarshal(raw, &snapshot); err != nil {
+		return accountInspectionResultSnapshot{}, err
+	}
+	if snapshot.Version != accountInspectionResultSnapshotVersion {
+		return accountInspectionResultSnapshot{}, fmt.Errorf("unsupported account inspection snapshot version %d", snapshot.Version)
+	}
+	if snapshot.LastFinishedAt <= 0 {
+		return accountInspectionResultSnapshot{}, fmt.Errorf("account inspection snapshot is missing completion time")
+	}
+	if snapshot.LastStartedAt <= 0 || snapshot.LastStartedAt > snapshot.LastFinishedAt {
+		snapshot.LastStartedAt = snapshot.LastFinishedAt
+	}
+	snapshot.State = normalizeAccountInspectionSnapshotState(snapshot.State)
+	snapshot.Settings = normalizeAccountInspectionSchedule(accountInspectionSchedule{Settings: snapshot.Settings}).Settings
+	snapshot.Results = sortAccountInspectionResults(snapshot.Results)
+	snapshot.HealthCounts = accountInspectionResultHealthCounts(snapshot.Results)
+	return snapshot, nil
+}
+
+func (s *accountInspectionScheduler) resultSnapshotLocked() (accountInspectionResultSnapshot, bool) {
+	if s == nil || s.status.LastFinishedAt <= 0 {
+		return accountInspectionResultSnapshot{}, false
+	}
+	settings := s.lastRunSettings
+	if strings.TrimSpace(settings.TargetType) == "" {
+		settings = s.schedule.Settings
+	}
+	return accountInspectionResultSnapshot{
+		Version:        accountInspectionResultSnapshotVersion,
+		State:          normalizeAccountInspectionSnapshotState(s.status.State),
+		LastStartedAt:  s.status.LastStartedAt,
+		LastFinishedAt: s.status.LastFinishedAt,
+		LastError:      s.status.LastError,
+		Settings:       settings,
+		Summary:        s.status.Summary,
+		HealthCounts:   s.healthCountsLocked(),
+		Results:        append([]accountInspectionResult(nil), s.status.Results...),
+	}, true
+}
+
+func (s *accountInspectionScheduler) applyResultSnapshotLocked(snapshot accountInspectionResultSnapshot, restored bool) {
+	s.lastRunSettings = snapshot.Settings
+	s.status.State = snapshot.State
+	s.status.LastStartedAt = snapshot.LastStartedAt
+	s.status.LastFinishedAt = snapshot.LastFinishedAt
+	s.status.LastError = snapshot.LastError
+	s.status.Progress = accountInspectionProgress{
+		Total:     len(snapshot.Results),
+		Completed: len(snapshot.Results),
+	}
+	s.status.Summary = snapshot.Summary
+	s.status.Logs = nil
+	s.status.Results = append([]accountInspectionResult(nil), snapshot.Results...)
+	s.status.RestoredSnapshot = restored
+	s.healthCounts = snapshot.HealthCounts
+}
+
+func (s *accountInspectionScheduler) saveResultSnapshotLocked() error {
+	snapshot, ok := s.resultSnapshotLocked()
+	if !ok {
+		return nil
+	}
+	if err := os.MkdirAll(filepath.Dir(s.snapshotPath), 0o755); err != nil {
+		return err
+	}
+	raw, err := json.MarshalIndent(snapshot, "", "  ")
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(s.snapshotPath, append(raw, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Chmod(s.snapshotPath, 0o600)
+}
+
+func (s *accountInspectionScheduler) loadResultSnapshot() error {
+	if s == nil {
+		return nil
+	}
+	raw, err := os.ReadFile(s.snapshotPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return err
+	}
+	snapshot, err := decodeAccountInspectionResultSnapshot(raw)
+	if err != nil {
+		return err
+	}
+	s.applyResultSnapshotLocked(snapshot, true)
+	return nil
+}
+
+func (s *accountInspectionScheduler) exportResultSnapshot() ([]byte, bool, error) {
+	if s == nil {
+		return nil, false, nil
+	}
+	s.mu.Lock()
+	snapshot, ok := s.resultSnapshotLocked()
+	s.mu.Unlock()
+	if !ok {
+		raw, err := os.ReadFile(s.snapshotPath)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil, false, nil
+			}
+			return nil, false, err
+		}
+		snapshot, err = decodeAccountInspectionResultSnapshot(raw)
+		if err != nil {
+			return nil, false, err
+		}
+	}
+	raw, err := json.Marshal(snapshot)
+	if err != nil {
+		return nil, false, err
+	}
+	return raw, true, nil
+}
+
+func (s *accountInspectionScheduler) importResultSnapshot(raw []byte) error {
+	if s == nil {
+		return nil
+	}
+	snapshot, err := decodeAccountInspectionResultSnapshot(raw)
+	if err != nil {
+		return err
+	}
+	s.mu.Lock()
+	if s.isRunningLocked() {
+		s.mu.Unlock()
+		return fmt.Errorf("account inspection is running")
+	}
+	s.applyResultSnapshotLocked(snapshot, true)
+	err = s.saveResultSnapshotLocked()
+	broadcast := s.statusBroadcastLocked()
+	s.mu.Unlock()
+	broadcast.send()
+	return err
 }
 
 func (s *accountInspectionScheduler) snapshotWithOptions(options accountInspectionSnapshotOptions) gin.H {
@@ -943,7 +1143,9 @@ func (s *accountInspectionScheduler) startRun(manual bool) error {
 		return fmt.Errorf("account inspection already running")
 	}
 	s.cancel = cancel
+	s.lastRunSettings = s.schedule.Settings
 	s.setRunStateLocked(accountInspectionStateRunning)
+	s.status.RestoredSnapshot = false
 	s.status.LastStartedAt = time.Now().UnixMilli()
 	s.status.LastFinishedAt = 0
 	s.status.LastError = ""
@@ -1059,6 +1261,10 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 	ctx, cancel := context.WithTimeout(ctx, accountInspectionMaxRunDuration)
 	defer cancel()
 	s.mu.Lock()
+	if s.status.RestoredSnapshot {
+		s.mu.Unlock()
+		return accountInspectionResult{}, errAccountInspectionRestoredSnapshotReadOnly
+	}
 	if s.isRunningLocked() {
 		s.mu.Unlock()
 		return accountInspectionResult{}, fmt.Errorf("account inspection already running")
@@ -1073,13 +1279,18 @@ func (s *accountInspectionScheduler) inspectOne(ctx context.Context, item accoun
 	}
 
 	s.mu.Lock()
+	var saveErr error
 	if !s.isRunningLocked() {
 		s.mergeSingleInspectionResultLocked(result)
 		s.status.Results = sortAccountInspectionResults(s.status.Results)
+		saveErr = s.saveResultSnapshotLocked()
 	}
 	broadcast := s.statusBroadcastLocked()
 	s.mu.Unlock()
 	broadcast.send()
+	if saveErr != nil {
+		return result, fmt.Errorf("failed to save account inspection snapshot: %w", saveErr)
+	}
 	return result, nil
 }
 
@@ -1087,7 +1298,16 @@ func (s *accountInspectionScheduler) refreshTokenNow(ctx context.Context, item a
 	if ctx == nil {
 		ctx = context.Background()
 	}
-	if s == nil || s.h == nil || s.h.authManager == nil {
+	if s == nil {
+		return accountInspectionResult{}, fmt.Errorf("account inspection scheduler unavailable")
+	}
+	s.mu.Lock()
+	restoredSnapshot := s.status.RestoredSnapshot
+	s.mu.Unlock()
+	if restoredSnapshot {
+		return accountInspectionResult{}, errAccountInspectionRestoredSnapshotReadOnly
+	}
+	if s.h == nil || s.h.authManager == nil {
 		return accountInspectionResult{}, fmt.Errorf("core auth manager unavailable")
 	}
 	auths, err := s.auths()
@@ -1190,12 +1410,14 @@ func (s *accountInspectionScheduler) mergeTokenRefreshResultLocked(result accoun
 		current.NextRefreshAt = result.NextRefreshAt
 		if result.TokenRefreshStatus == "failed" {
 			current.Error = result.Error
+			current.ErrorDetail = result.ErrorDetail
 			current.ErrorCode = result.ErrorCode
 			current.ActionReason = result.ActionReason
 			return current, true
 		}
 		if result.TokenRefreshStatus == "success" && current.ErrorCode == "token_refresh_error" {
 			current.Error = ""
+			current.ErrorDetail = ""
 			current.ErrorCode = ""
 			current.ActionReason = result.ActionReason
 			return current, true
@@ -1256,6 +1478,7 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 	s.status.LastFinishedAt = finishedAt
 	s.status.Summary = summary
 	s.status.Results = results
+	s.status.RestoredSnapshot = false
 	s.healthCounts = accountInspectionResultHealthCounts(results)
 	completed := s.status.Progress.Completed
 	if state == accountInspectionStateCompleted {
@@ -1278,6 +1501,9 @@ func (s *accountInspectionScheduler) run(ctx context.Context, cancel context.Can
 		if err := s.saveLocked(); err != nil {
 			log.WithError(err).Warn("failed to save next account inspection run time")
 		}
+	}
+	if err := s.saveResultSnapshotLocked(); err != nil {
+		log.WithError(err).Warn("failed to save account inspection snapshot")
 	}
 	s.mu.Unlock()
 	broadcast.send()
@@ -1693,7 +1919,8 @@ func (s *accountInspectionScheduler) inspectAccount(ctx context.Context, account
 	result.UsedPercent = decision.UsedPercent
 	result.IsQuota = decision.IsQuota
 	result.Error = decision.Error
-	result.ErrorCode = accountInspectionDecisionErrorCode(decision, statusCode)
+	result.ErrorDetail = decision.ErrorDetail
+	result.ErrorCode = accountInspectionDecisionErrorCode(account.Provider, decision, statusCode)
 	if decision.DeepProbeStatus != "" {
 		result.DeepProbeTriggered = true
 		result.DeepProbeStatus = string(decision.DeepProbeStatus)
@@ -1873,6 +2100,7 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 	body := `{"project":"` + escapeJSONString(projectID) + `"}`
 	urls := antigravityQuotaURLs()
 	var priorityStatus *int
+	var priorityDetail string
 	for _, url := range urls {
 		resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
 			return s.apiCall(ctx, account.Auth, http.MethodPost, url, map[string]string{
@@ -1888,6 +2116,7 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 		if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 			if isAccountErrorStatus(resp.StatusCode) {
 				priorityStatus = status
+				priorityDetail = resp.Body
 			}
 			continue
 		}
@@ -1912,7 +2141,7 @@ func (s *accountInspectionScheduler) inspectAntigravity(ctx context.Context, acc
 		return decision, status, nil
 	}
 	if priorityStatus != nil {
-		return authErrorDecision(account, *priorityStatus), priorityStatus, nil
+		return withInspectionHTTPErrorDetail(authErrorDecision(account, *priorityStatus), priorityDetail), priorityStatus, nil
 	}
 	return accountInspectionDecision{}, priorityStatus, fmt.Errorf("antigravity quota unavailable")
 }
@@ -1976,6 +2205,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 	body := buildAntigravityDeepProbeBody(projectID, model)
 	var lastStatus *int
 	var lastMessage string
+	var lastDetail string
 	for _, url := range antigravityGenerateURLs() {
 		resp, err := s.withRetry(ctx, settings.Retries, func() (accountInspectionHTTPResult, error) {
 			return s.apiCall(ctx, account.Auth, http.MethodPost, url, map[string]string{
@@ -1990,6 +2220,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 		}
 		lastStatus = intPtr(resp.StatusCode)
 		probeStatus, probeMessage := classifyAntigravityDeepProbeResponse(resp)
+		probeDetail := inspectionHTTPErrorDetail(resp.Body)
 		switch probeStatus {
 		case accountInspectionDeepProbeSuccess:
 			s.clearInspectionAuthError(ctx, account)
@@ -2003,11 +2234,12 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 			probeDecision.UsedPercent = decision.UsedPercent
 			probeDecision.DeepProbeStatus = accountInspectionDeepProbeAuthError
 			probeDecision.DeepProbeError = probeMessage
+			probeDecision.ErrorDetail = probeDetail
 			s.appendLog("warning", fmt.Sprintf("%s Antigravity 深度检测授权异常：%s", account.identity(), probeMessage))
 			return probeDecision, lastStatus, nil
 		case accountInspectionDeepProbeQuota:
 			s.clearInspectionAuthError(ctx, account)
-			probeDecision := accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "Antigravity 深度检测返回额度不可用，建议禁用账号", UsedPercent: decision.UsedPercent, IsQuota: true, DeepProbeStatus: accountInspectionDeepProbeQuota, DeepProbeError: probeMessage}
+			probeDecision := accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "Antigravity 深度检测返回额度不可用，建议禁用账号", UsedPercent: decision.UsedPercent, IsQuota: true, ErrorDetail: probeDetail, DeepProbeStatus: accountInspectionDeepProbeQuota, DeepProbeError: probeMessage}
 			if account.Disabled {
 				probeDecision.Action = accountInspectionActionKeep
 				probeDecision.ActionReason = "Antigravity 深度检测返回额度不可用，但账号已禁用"
@@ -2016,6 +2248,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 			return probeDecision, lastStatus, nil
 		default:
 			lastMessage = probeMessage
+			lastDetail = probeDetail
 			if resp.StatusCode != http.StatusTooManyRequests && resp.StatusCode < http.StatusInternalServerError {
 				break
 			}
@@ -2028,6 +2261,7 @@ func (s *accountInspectionScheduler) applyAntigravityDeepProbe(ctx context.Conte
 	decision.Action = accountInspectionActionKeep
 	decision.ActionReason = "Antigravity 深度检测临时异常，保留账号"
 	decision.Error = lastMessage
+	decision.ErrorDetail = lastDetail
 	decision.DeepProbeStatus = accountInspectionDeepProbeTransientError
 	decision.DeepProbeError = lastMessage
 	s.appendLog("warning", fmt.Sprintf("%s Antigravity 深度检测临时异常：%s", account.identity(), lastMessage))
@@ -2125,11 +2359,26 @@ func summarizeInspectionHTTPBody(body string) string {
 		if message := nestedString(nestedMap(payload, "error"), "message", ""); message != "" {
 			return message
 		}
+		if message := stringFromAny(payload["error"]); message != "" {
+			return message
+		}
+		if message := stringFromAny(payload["message"]); message != "" {
+			return message
+		}
 	}
 	if len(body) > 240 {
 		return body[:240]
 	}
 	return body
+}
+
+func inspectionHTTPErrorDetail(body string) string {
+	return strings.TrimSpace(body)
+}
+
+func withInspectionHTTPErrorDetail(decision accountInspectionDecision, body string) accountInspectionDecision {
+	decision.ErrorDetail = inspectionHTTPErrorDetail(body)
+	return decision
 }
 
 func statusValue(status *int) int {
@@ -2156,7 +2405,7 @@ func (s *accountInspectionScheduler) inspectClaude(ctx context.Context, account 
 	}
 	if usageResp.StatusCode < 200 || usageResp.StatusCode >= 300 {
 		if isAccountErrorStatus(usageResp.StatusCode) {
-			return authErrorDecision(account, usageResp.StatusCode), status, nil
+			return withInspectionHTTPErrorDetail(authErrorDecision(account, usageResp.StatusCode), usageResp.Body), status, nil
 		}
 		return accountInspectionDecision{}, status, fmt.Errorf("HTTP %d", usageResp.StatusCode)
 	}
@@ -2199,7 +2448,11 @@ func (s *accountInspectionScheduler) inspectCodex(ctx context.Context, account a
 	if payload != nil && len(windows) > 0 {
 		s.persistQuotaState(ctx, account, quotaSuccessState(codexQuotaStateValues(account.Auth, payload, windows, resp.Body)))
 	}
-	return codexDecision(account, resp.StatusCode, used, isQuota, settings.UsedPercentThreshold), status, nil
+	decision := codexDecision(account, resp.StatusCode, used, isQuota, settings.UsedPercentThreshold)
+	if isAccountErrorStatus(resp.StatusCode) {
+		decision = withInspectionHTTPErrorDetail(decision, resp.Body)
+	}
+	return decision, status, nil
 }
 
 func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings) (accountInspectionDecision, *int, error) {
@@ -2218,7 +2471,7 @@ func (s *accountInspectionScheduler) inspectGeminiCLI(ctx context.Context, accou
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if isAccountErrorStatus(resp.StatusCode) {
-			return authErrorDecision(account, resp.StatusCode), status, nil
+			return withInspectionHTTPErrorDetail(authErrorDecision(account, resp.StatusCode), resp.Body), status, nil
 		}
 		return accountInspectionDecision{}, status, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -2287,7 +2540,7 @@ func (s *accountInspectionScheduler) inspectKimi(ctx context.Context, account ac
 	}
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
 		if isAccountErrorStatus(resp.StatusCode) {
-			return authErrorDecision(account, resp.StatusCode), status, nil
+			return withInspectionHTTPErrorDetail(authErrorDecision(account, resp.StatusCode), resp.Body), status, nil
 		}
 		return accountInspectionDecision{}, status, fmt.Errorf("HTTP %d", resp.StatusCode)
 	}
@@ -2307,10 +2560,10 @@ func (s *accountInspectionScheduler) inspectXAI(ctx context.Context, account acc
 	billing := mergeXAIBillingSummaries(weeklyBilling, monthlyBilling)
 	if billing == nil {
 		if isAccountErrorStatus(weeklyResp.StatusCode) {
-			return authErrorDecision(account, weeklyResp.StatusCode), status, nil
+			return withInspectionHTTPErrorDetail(authErrorDecision(account, weeklyResp.StatusCode), weeklyResp.Body), status, nil
 		}
 		if isAccountErrorStatus(monthlyResp.StatusCode) {
-			return authErrorDecision(account, monthlyResp.StatusCode), status, nil
+			return withInspectionHTTPErrorDetail(authErrorDecision(account, monthlyResp.StatusCode), monthlyResp.Body), status, nil
 		}
 		if weeklyErr != nil {
 			return accountInspectionDecision{}, status, weeklyErr
@@ -2327,7 +2580,279 @@ func (s *accountInspectionScheduler) inspectXAI(ctx context.Context, account acc
 		"weeklyRawShapeHash":  jsonShapeHash(weeklyResp.Body),
 		"monthlyRawShapeHash": jsonShapeHash(monthlyResp.Body),
 	}))
-	return quotaDecision(account, used, billing != nil, settings.UsedPercentThreshold), status, nil
+	decision := quotaDecision(account, used, billing != nil, settings.UsedPercentThreshold)
+	if settings.XAIDeepProbeEnabled && accountInspectionShouldDeepProbe(decision) {
+		return s.applyXAIDeepProbe(ctx, account, settings, decision, status)
+	}
+	return decision, status, nil
+}
+
+func accountInspectionShouldDeepProbe(decision accountInspectionDecision) bool {
+	if decision.UsedPercent == nil || decision.IsQuota {
+		return false
+	}
+	return decision.Action == accountInspectionActionKeep || decision.Action == accountInspectionActionEnable
+}
+
+func (s *accountInspectionScheduler) applyXAIDeepProbe(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, decision accountInspectionDecision, quotaStatus *int) (accountInspectionDecision, *int, error) {
+	model := strings.TrimSpace(settings.XAIDeepProbeModel)
+	if model == "" {
+		decision.DeepProbeStatus = accountInspectionDeepProbeSkipped
+		decision.DeepProbeError = "missing xAI deep probe model"
+		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测跳过：%s", account.identity(), decision.DeepProbeError))
+		return decision, quotaStatus, nil
+	}
+
+	release, err := s.acquireXAIDeepProbe(ctx)
+	if err != nil {
+		return decision, quotaStatus, err
+	}
+	defer release()
+
+	s.appendLog("info", fmt.Sprintf("%s xAI 深度检测开始：%s", account.identity(), model))
+	resp, status, message, err := runXAIDeepProbeWithRetry(ctx, settings.Retries, accountInspectionXAIRetryDelay, func() (accountInspectionHTTPResult, error) {
+		return s.apiCall(ctx, account.Auth, http.MethodPost, xaiResponsesURL(account.Auth), map[string]string{
+			"Authorization": "Bearer $TOKEN$",
+			"Content-Type":  "application/json",
+			"Accept":        "text/event-stream",
+			"Connection":    "Keep-Alive",
+		}, buildXAIDeepProbeBody(model), settings.Timeout)
+	})
+	var probeStatus *int
+	if resp.StatusCode != 0 {
+		probeStatus = intPtr(resp.StatusCode)
+	}
+	if err != nil {
+		message := err.Error()
+		s.syncInspectionAuthError(ctx, account, "xai_deep_probe_error", message, statusValue(probeStatus))
+		decision.Action = accountInspectionActionKeep
+		decision.ActionReason = "xAI 深度检测临时异常，保留账号"
+		decision.Error = message
+		decision.DeepProbeStatus = accountInspectionDeepProbeTransientError
+		decision.DeepProbeError = message
+		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测临时异常：%s", account.identity(), message))
+		return decision, firstStatus(probeStatus, quotaStatus), nil
+	}
+
+	errorDetail := inspectionHTTPErrorDetail(resp.Body)
+	switch status {
+	case accountInspectionDeepProbeSuccess:
+		s.clearInspectionAuthError(ctx, account)
+		decision.DeepProbeStatus = accountInspectionDeepProbeSuccess
+		decision.DeepProbeError = ""
+		s.appendLog("success", fmt.Sprintf("%s xAI 深度检测通过", account.identity()))
+		return decision, probeStatus, nil
+	case accountInspectionDeepProbeAuthError:
+		s.syncInspectionAuthStatus(ctx, account, resp.StatusCode)
+		probeDecision := authErrorDecision(account, resp.StatusCode)
+		probeDecision.UsedPercent = decision.UsedPercent
+		probeDecision.DeepProbeStatus = accountInspectionDeepProbeAuthError
+		probeDecision.DeepProbeError = message
+		probeDecision.ErrorDetail = errorDetail
+		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测授权异常：%s", account.identity(), message))
+		return probeDecision, probeStatus, nil
+	case accountInspectionDeepProbeQuota:
+		s.clearInspectionAuthError(ctx, account)
+		probeDecision := accountInspectionDecision{Action: accountInspectionActionDisable, ActionReason: "xAI 深度检测返回额度不可用，建议禁用账号", UsedPercent: decision.UsedPercent, IsQuota: true, ErrorDetail: errorDetail, DeepProbeStatus: accountInspectionDeepProbeQuota, DeepProbeError: message}
+		if account.Disabled {
+			probeDecision.Action = accountInspectionActionKeep
+			probeDecision.ActionReason = "xAI 深度检测返回额度不可用，但账号已禁用"
+		}
+		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测额度不可用：%s", account.identity(), message))
+		return probeDecision, probeStatus, nil
+	default:
+		s.syncInspectionAuthError(ctx, account, "xai_deep_probe_error", message, resp.StatusCode)
+		decision.Action = accountInspectionActionKeep
+		decision.ActionReason = "xAI 深度检测临时异常，保留账号"
+		decision.Error = message
+		decision.ErrorDetail = errorDetail
+		decision.DeepProbeStatus = accountInspectionDeepProbeTransientError
+		decision.DeepProbeError = message
+		s.appendLog("warning", fmt.Sprintf("%s xAI 深度检测临时异常：%s", account.identity(), message))
+		return decision, probeStatus, nil
+	}
+}
+
+func (s *accountInspectionScheduler) acquireXAIDeepProbe(ctx context.Context) (func(), error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	s.xaiDeepProbeOnce.Do(func() {
+		s.xaiDeepProbeGate = make(chan struct{}, 1)
+	})
+	select {
+	case s.xaiDeepProbeGate <- struct{}{}:
+		return func() { <-s.xaiDeepProbeGate }, nil
+	case <-ctx.Done():
+		return nil, ctx.Err()
+	}
+}
+
+func runXAIDeepProbeWithRetry(
+	ctx context.Context,
+	retries int,
+	retryDelay time.Duration,
+	task func() (accountInspectionHTTPResult, error),
+) (accountInspectionHTTPResult, accountInspectionDeepProbeStatus, string, error) {
+	if ctx == nil {
+		ctx = context.Background()
+	}
+	attempts := retries + 1
+	if attempts < accountInspectionXAIMinAttempts {
+		attempts = accountInspectionXAIMinAttempts
+	}
+	if attempts > accountInspectionMaxRetries+1 {
+		attempts = accountInspectionMaxRetries + 1
+	}
+	var last accountInspectionHTTPResult
+	var lastStatus accountInspectionDeepProbeStatus
+	var lastMessage string
+	var lastErr error
+	for attempt := 0; attempt < attempts; attempt++ {
+		last, lastErr = task()
+		if lastErr == nil {
+			lastStatus, lastMessage = classifyXAIDeepProbeResponse(last)
+			if !shouldRetryXAIDeepProbe(lastStatus, lastMessage) {
+				return last, lastStatus, lastMessage, nil
+			}
+		}
+		if attempt+1 >= attempts {
+			break
+		}
+		if retryDelay <= 0 {
+			continue
+		}
+		timer := time.NewTimer(retryDelay)
+		select {
+		case <-ctx.Done():
+			if !timer.Stop() {
+				select {
+				case <-timer.C:
+				default:
+				}
+			}
+			return last, lastStatus, lastMessage, ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return last, lastStatus, lastMessage, lastErr
+}
+
+func shouldRetryXAIDeepProbe(status accountInspectionDeepProbeStatus, message string) bool {
+	if status != accountInspectionDeepProbeTransientError {
+		return false
+	}
+	return !strings.Contains(strings.ToLower(message), "content_filter")
+}
+
+func xaiResponsesURL(auth *coreauth.Auth) string {
+	baseURL := ""
+	if auth != nil {
+		baseURL = strings.TrimSpace(auth.Attributes["base_url"])
+		if baseURL == "" {
+			baseURL = strings.TrimSpace(stringFromAny(auth.Metadata["base_url"]))
+		}
+	}
+	if baseURL == "" {
+		baseURL = "https://api.x.ai/v1"
+	}
+	return strings.TrimRight(baseURL, "/") + "/responses"
+}
+
+func buildXAIDeepProbeBody(model string) string {
+	raw, _ := json.Marshal(map[string]any{
+		"model":             strings.TrimSpace(model),
+		"input":             "ping",
+		"max_output_tokens": 1,
+		"stream":            true,
+	})
+	return string(raw)
+}
+
+func classifyXAIDeepProbeResponse(resp accountInspectionHTTPResult) (accountInspectionDeepProbeStatus, string) {
+	if resp.StatusCode >= 200 && resp.StatusCode < 300 {
+		return classifyXAIDeepProbeSuccessBody(resp.Body)
+	}
+	message := summarizeInspectionHTTPBody(resp.Body)
+	if message == "" {
+		message = fmt.Sprintf("HTTP %d", resp.StatusCode)
+	}
+	if isAccountErrorStatus(resp.StatusCode) {
+		return accountInspectionDeepProbeAuthError, message
+	}
+	if resp.StatusCode == http.StatusPaymentRequired || isXAIQuotaFailure(resp.Body) {
+		return accountInspectionDeepProbeQuota, message
+	}
+	return accountInspectionDeepProbeTransientError, message
+}
+
+func classifyXAIDeepProbeSuccessBody(body string) (accountInspectionDeepProbeStatus, string) {
+	lastEvent := ""
+	for _, line := range strings.Split(body, "\n") {
+		line = strings.TrimSpace(line)
+		if strings.HasPrefix(line, "data:") {
+			line = strings.TrimSpace(strings.TrimPrefix(line, "data:"))
+		}
+		if line == "" || line == "[DONE]" {
+			continue
+		}
+		var payload map[string]any
+		if json.Unmarshal([]byte(line), &payload) != nil {
+			continue
+		}
+		eventType := strings.ToLower(strings.TrimSpace(stringFromAny(payload["type"])))
+		response := nestedMap(payload, "response")
+		if eventType == "" {
+			switch strings.ToLower(strings.TrimSpace(stringFromAny(payload["status"]))) {
+			case "completed":
+				eventType = "response.completed"
+			case "incomplete":
+				eventType = "response.incomplete"
+				response = payload
+			case "failed":
+				eventType = "response.failed"
+				response = payload
+			}
+		}
+		if eventType != "" {
+			lastEvent = eventType
+		}
+		switch eventType {
+		case "response.completed":
+			return accountInspectionDeepProbeSuccess, ""
+		case "response.incomplete":
+			reason := strings.ToLower(strings.TrimSpace(stringFromAny(nestedMap(response, "incomplete_details")["reason"])))
+			if reason == "max_output_tokens" {
+				return accountInspectionDeepProbeSuccess, ""
+			}
+			if reason == "" {
+				reason = "unknown reason"
+			}
+			return accountInspectionDeepProbeTransientError, "xAI 深度检测响应未完成：" + reason
+		case "response.failed", "error":
+			message := nestedString(nestedMap(response, "error"), "message", "")
+			if message == "" {
+				message = nestedString(nestedMap(payload, "error"), "message", "")
+			}
+			if message == "" {
+				message = "unknown response failure"
+			}
+			return accountInspectionDeepProbeTransientError, "xAI 深度检测响应失败：" + message
+		}
+	}
+	if lastEvent != "" {
+		return accountInspectionDeepProbeTransientError, "xAI 深度检测缺少终态事件，最后事件：" + lastEvent
+	}
+	return accountInspectionDeepProbeTransientError, "xAI 深度检测响应为空或格式异常"
+}
+
+func isXAIQuotaFailure(body string) bool {
+	lower := strings.ToLower(body)
+	return strings.Contains(lower, "free-usage-exhausted") ||
+		strings.Contains(lower, "quota_exhausted") ||
+		strings.Contains(lower, "quota exhausted") ||
+		strings.Contains(lower, "usage limit") ||
+		strings.Contains(lower, "included free usage")
 }
 
 func (s *accountInspectionScheduler) fetchXAIBillingSummary(ctx context.Context, account accountInspectionAccount, settings accountInspectionSettings, url string, headers map[string]string) (map[string]any, accountInspectionHTTPResult, error) {
@@ -2448,6 +2973,7 @@ func setAuthInspectionDisabledState(auth *coreauth.Auth, disabled bool) {
 	if auth.Metadata == nil {
 		auth.Metadata = make(map[string]any)
 	}
+	clearRoutingProtectionOwnership(auth)
 	auth.Metadata["disabled"] = disabled
 	if disabled {
 		auth.Status = coreauth.StatusDisabled
@@ -2602,6 +3128,11 @@ func writePluginVirtualManagedMetadataToSourceFile(sourcePath string, auth *core
 	if value, ok := auth.Metadata["quota_cache"]; ok {
 		source["quota_cache"] = value
 	}
+	if value, ok := auth.Metadata[routingProtectionMetadataKey]; ok {
+		source[routingProtectionMetadataKey] = value
+	} else {
+		delete(source, routingProtectionMetadataKey)
+	}
 	raw, err := json.Marshal(source)
 	if err != nil {
 		return err
@@ -2723,7 +3254,7 @@ func authInspectionLastErrorCode(auth *coreauth.Auth) string {
 
 func isInspectionAuthErrorCode(code string) bool {
 	switch strings.TrimSpace(code) {
-	case "inspection_http_error", "inspection_probe_error", "antigravity_deep_probe_error", "token_refresh_error":
+	case "inspection_http_error", "inspection_probe_error", "antigravity_deep_probe_error", "xai_deep_probe_error", "token_refresh_error":
 		return true
 	default:
 		return false
@@ -2755,12 +3286,15 @@ func accountInspectionErrorCode(status *int, fallback string) string {
 	return fallback
 }
 
-func accountInspectionDecisionErrorCode(decision accountInspectionDecision, status *int) string {
+func accountInspectionDecisionErrorCode(provider string, decision accountInspectionDecision, status *int) string {
 	if status != nil && isAccountErrorStatus(*status) {
 		return "inspection_http_error"
 	}
 	switch decision.DeepProbeStatus {
 	case accountInspectionDeepProbeAuthError, accountInspectionDeepProbeTransientError:
+		if strings.EqualFold(strings.TrimSpace(provider), "xai") {
+			return "xai_deep_probe_error"
+		}
 		return "antigravity_deep_probe_error"
 	}
 	if decision.Error != "" {
@@ -2871,7 +3405,13 @@ func (s *accountInspectionScheduler) applyManualActionResultLocked(result accoun
 	})
 }
 
-func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, items []accountInspectionActionItem) []accountInspectionActionOutcome {
+func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, items []accountInspectionActionItem) ([]accountInspectionActionOutcome, error) {
+	s.mu.Lock()
+	restoredSnapshot := s.status.RestoredSnapshot
+	s.mu.Unlock()
+	if restoredSnapshot {
+		return nil, errAccountInspectionRestoredSnapshotReadOnly
+	}
 	executableItems := dedupeExecutionActionItems(items)
 	outcomes := make([]accountInspectionActionOutcome, len(executableItems))
 	executedResults := make([]accountInspectionResult, len(executableItems))
@@ -2909,10 +3449,14 @@ func (s *accountInspectionScheduler) executeManualActions(ctx context.Context, i
 		s.applyManualActionResultLocked(result)
 	}
 	s.status.Results = sortAccountInspectionResults(s.status.Results)
+	saveErr := s.saveResultSnapshotLocked()
 	broadcast := s.statusBroadcastLocked()
 	s.mu.Unlock()
 	broadcast.send()
-	return outcomes
+	if saveErr != nil {
+		return outcomes, fmt.Errorf("failed to save account inspection snapshot: %w", saveErr)
+	}
+	return outcomes, nil
 }
 
 func dedupeExecutionActionItems(items []accountInspectionActionItem) []accountInspectionActionItem {
@@ -4954,6 +5498,9 @@ func nestedMap(data map[string]any, key string) map[string]any {
 }
 
 func nestedString(data map[string]any, key string, child string) string {
+	if child == "" {
+		return stringFromAny(data[key])
+	}
 	return stringFromAny(nestedMap(data, key)[child])
 }
 
@@ -5165,7 +5712,11 @@ func (h *Handler) InspectOneAccount(c *gin.Context) {
 	result, err := scheduler.inspectOne(c.Request.Context(), request.Item)
 	snapshot := scheduler.snapshotForRequest(c)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"error": err.Error(), "result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
+		statusCode := http.StatusOK
+		if errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
+			statusCode = http.StatusConflict
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error(), "result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
@@ -5184,16 +5735,23 @@ func (h *Handler) RefreshAccountInspectionToken(c *gin.Context) {
 	}
 	result, err := scheduler.refreshTokenNow(c.Request.Context(), request.Item)
 	scheduler.mu.Lock()
+	var saveErr error
 	if result.Key != "" {
 		scheduler.mergeTokenRefreshResultLocked(result)
 		scheduler.status.Results = sortAccountInspectionResults(scheduler.status.Results)
+		saveErr = scheduler.saveResultSnapshotLocked()
 	}
 	broadcast := scheduler.statusBroadcastLocked()
 	scheduler.mu.Unlock()
 	broadcast.send()
+	err = firstNonNilError(err, saveErr)
 	snapshot := scheduler.snapshotForRequest(c)
 	if err != nil {
-		c.JSON(http.StatusOK, gin.H{"error": err.Error(), "result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
+		statusCode := http.StatusOK
+		if errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
+			statusCode = http.StatusConflict
+		}
+		c.JSON(statusCode, gin.H{"error": err.Error(), "result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"result": result, "schedule": snapshot["schedule"], "status": snapshot["status"]})
@@ -5240,8 +5798,22 @@ func (h *Handler) ExecuteAccountInspectionActions(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid request body"})
 		return
 	}
-	outcomes := scheduler.executeManualActions(c.Request.Context(), request.Items)
+	outcomes, err := scheduler.executeManualActions(c.Request.Context(), request.Items)
 	snapshot := scheduler.snapshotForRequest(c)
+	if err != nil {
+		statusCode := http.StatusInternalServerError
+		if errors.Is(err, errAccountInspectionRestoredSnapshotReadOnly) {
+			statusCode = http.StatusConflict
+		}
+		c.JSON(statusCode, gin.H{
+			"error":    err.Error(),
+			"outcomes": outcomes,
+			"summary":  summarizeManualActionOutcomes(outcomes),
+			"schedule": snapshot["schedule"],
+			"status":   snapshot["status"],
+		})
+		return
+	}
 	c.JSON(http.StatusOK, gin.H{
 		"outcomes": outcomes,
 		"summary":  summarizeManualActionOutcomes(outcomes),

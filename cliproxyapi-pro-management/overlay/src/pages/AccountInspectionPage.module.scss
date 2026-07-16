@@ -1,5 +1,6 @@
 .page,
-.settingsModal {
+.settingsModal,
+.errorModal {
   --inspect-bg: var(--bg-secondary);
   --inspect-surface: var(--bg-primary);
   --inspect-surface-elevated: color-mix(in srgb, var(--bg-primary) 88%, var(--bg-secondary));
@@ -20,6 +21,27 @@
   display: grid;
   gap: 24px;
   min-width: 0;
+}
+
+.restoredSnapshotNotice {
+  display: grid;
+  gap: 5px;
+  padding: 13px 16px;
+  border: 1px solid color-mix(in srgb, var(--inspect-amber) 32%, var(--inspect-line));
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--inspect-amber) 8%, var(--inspect-surface));
+  color: var(--inspect-ink);
+}
+
+.restoredSnapshotNotice strong {
+  color: var(--inspect-amber);
+  font-size: 13px;
+}
+
+.restoredSnapshotNotice span {
+  color: var(--inspect-muted);
+  font-size: 13px;
+  line-height: 1.55;
 }
 
 .heroCard:global(.card),
@@ -67,7 +89,7 @@
 
 .heroHeader {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1fr);
   align-items: start;
   gap: 20px;
   min-width: 0;
@@ -140,6 +162,7 @@
 
 .heroActions {
   justify-content: flex-end;
+  max-width: 100%;
   gap: 8px;
   padding: 4px;
   border: 1px solid color-mix(in srgb, var(--inspect-line) 72%, transparent);
@@ -378,6 +401,36 @@
   align-items: center;
   gap: 8px;
   min-width: 0;
+}
+
+.resultProviderSelect {
+  flex: 0 0 172px;
+  width: 172px;
+  min-width: 0;
+}
+
+.resultProviderSelectTrigger {
+  height: 36px;
+  min-height: 36px;
+  padding: 0 12px;
+  border-color: color-mix(in srgb, var(--inspect-line) 80%, transparent);
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--inspect-surface-muted) 78%, var(--inspect-surface));
+  color: var(--inspect-ink);
+  font-size: 12px;
+  font-weight: 700;
+  box-shadow: none;
+}
+
+.resultProviderSelectTrigger:hover:not(:disabled),
+.resultProviderSelectTrigger[aria-expanded='true'] {
+  border-color: color-mix(in srgb, var(--inspect-accent) 36%, var(--inspect-line));
+  background: color-mix(in srgb, var(--inspect-accent) 7%, var(--inspect-surface));
+  box-shadow: none;
+}
+
+.resultProviderSelectDropdown {
+  border-radius: 12px;
 }
 
 .operationModuleHeader h2 {
@@ -673,22 +726,43 @@
   line-height: 1.5;
 }
 
-.providerDistributionHeader > span {
+.providerDistributionSelection:global(.btn) {
   display: inline-flex;
   align-items: center;
-  flex: 0 0 auto;
-  min-height: 30px;
-  max-width: 180px;
-  overflow: hidden;
-  padding: 0 10px;
+  flex: 0 1 auto;
+  min-width: 0;
+  min-height: 34px;
+  max-width: 220px;
+  padding: 0 12px;
   border: 1px solid color-mix(in srgb, var(--inspect-accent) 18%, var(--inspect-line));
-  border-radius: 999px;
+  border-radius: 8px;
   background: color-mix(in srgb, var(--inspect-accent) 7%, var(--inspect-surface));
   color: var(--inspect-accent);
   font-size: 12px;
   font-weight: 700;
+  box-shadow: none;
+}
+
+.providerDistributionSelection:global(.btn) > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  overflow: hidden;
+  line-height: 1;
   text-overflow: ellipsis;
   white-space: nowrap;
+}
+
+.providerDistributionSelection:global(.btn) svg {
+  flex: 0 0 auto;
+}
+
+.providerDistributionSelection:global(.btn):hover:not(:disabled) {
+  transform: translateY(-1px);
+  border-color: color-mix(in srgb, var(--inspect-accent) 38%, var(--inspect-line));
+  background: color-mix(in srgb, var(--inspect-accent) 12%, var(--inspect-surface));
+  box-shadow: none;
 }
 
 .providerSelectorList {
@@ -2358,9 +2432,7 @@
 
 .healthCell {
   display: inline-flex;
-  flex-direction: column;
   align-items: flex-start;
-  gap: 5px;
   max-width: 100%;
 }
 
@@ -2373,32 +2445,31 @@
   border: 1px solid transparent;
   font-size: 12px;
   font-weight: 600;
-  white-space: nowrap;
+  line-height: 1.35;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
-.healthCode {
+.healthErrorButton {
   display: inline-flex;
   align-items: center;
-  max-width: 86px;
-  min-height: 18px;
-  padding: 0 6px;
-  border-radius: 5px;
-  border: 1px solid var(--inspect-line);
-  background: color-mix(in srgb, var(--inspect-muted) 8%, var(--inspect-surface));
-  color: var(--inspect-muted);
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
-  font-size: 11px;
-  line-height: 1;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  min-width: 0;
+  padding: 0;
+  border: 0;
+  border-radius: 999px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
 }
 
-.healthCodeList {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 4px;
-  max-width: 100%;
+.healthErrorButton:hover {
+  filter: brightness(0.97);
+}
+
+.healthErrorButton:focus-visible {
+  outline: 2px solid color-mix(in srgb, var(--inspect-red) 42%, var(--inspect-line));
+  outline-offset: 2px;
 }
 
 .healthHealthy {
@@ -2463,7 +2534,7 @@
 }
 
 .healthColumn {
-  width: 10%;
+  width: 15%;
 }
 
 .enabledColumn {
@@ -2479,7 +2550,7 @@
 }
 
 .verdictColumn {
-  width: 19%;
+  width: 14%;
 }
 
 .operationColumn {
@@ -2582,13 +2653,96 @@
   white-space: nowrap;
 }
 
-.verdictCell span {
+.errorDetailsPanel {
+  display: grid;
+  gap: 14px;
+  padding: 2px 0 4px;
+}
+
+.errorModalActions {
+  display: flex;
+  justify-content: flex-end;
+}
+
+.errorOverview {
+  display: grid;
+  justify-items: start;
+  gap: 10px;
+  min-width: 0;
+  padding: 14px 16px;
+  border: 1px solid color-mix(in srgb, var(--inspect-red) 24%, var(--inspect-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--inspect-red) 7%, var(--inspect-surface));
+}
+
+.errorOverview strong {
+  color: var(--inspect-ink);
+  font-size: 15px;
+  font-weight: 650;
+  line-height: 1.45;
+  overflow-wrap: anywhere;
+}
+
+.errorDetailsGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr);
+  border: 1px solid color-mix(in srgb, var(--inspect-line) 82%, transparent);
+  border-radius: 8px;
+  overflow: hidden;
+}
+
+.errorDetailItem {
+  display: flex;
+  align-items: baseline;
+  justify-content: space-between;
+  gap: 16px;
+  min-width: 0;
+  padding: 9px 12px;
+  background: var(--inspect-surface);
+}
+
+.errorDetailItem + .errorDetailItem {
+  border-top: 1px solid color-mix(in srgb, var(--inspect-line) 72%, transparent);
+}
+
+.errorDetailItem span,
+.errorMessageBlock > span {
   color: var(--inspect-muted);
   font-size: 12px;
   line-height: 1.35;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+}
+
+.errorDetailItem strong {
+  min-width: 0;
+  max-width: 72%;
+  text-align: right;
+  overflow-wrap: anywhere;
+  color: var(--inspect-ink);
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  font-weight: 600;
+  line-height: 1.35;
+}
+
+.errorMessageBlock {
+  display: grid;
+  gap: 6px;
+}
+
+.errorMessage {
+  max-height: min(440px, 48vh);
+  overflow: auto;
+  margin: 0;
+  padding: 12px 14px;
+  border: 1px solid color-mix(in srgb, var(--inspect-line) 86%, transparent);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--inspect-surface-muted) 58%, var(--inspect-surface));
+  color: var(--inspect-ink);
+  font-family: var(--font-family-mono, ui-monospace, SFMono-Regular, Menlo, monospace);
+  font-size: 12px;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
 }
 
 .stateText,
@@ -3021,6 +3175,11 @@
     justify-content: flex-start;
   }
 
+  .resultProviderSelect {
+    flex-basis: 160px;
+    width: 160px;
+  }
+
   .heroActions,
   .panelActions,
   .resultsHeaderActions,
@@ -3047,9 +3206,8 @@
     grid-template-columns: none;
   }
 
-  .providerDistributionHeader > span {
-    max-width: min(46%, 180px);
-    white-space: nowrap;
+  .providerDistributionSelection:global(.btn) {
+    max-width: min(58%, 220px);
   }
 
   .providerSelectorRow {

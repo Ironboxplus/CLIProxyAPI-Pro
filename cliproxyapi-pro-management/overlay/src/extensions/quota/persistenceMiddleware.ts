@@ -19,6 +19,11 @@ interface QuotaStatusState {
   cachedAt?: number;
 }
 
+type QuotaStoreState = ReturnType<typeof useQuotaStore.getState>;
+type QuotaMapUpdater = (
+  previous: Record<string, QuotaStatusState>
+) => Record<string, QuotaStatusState>;
+
 class QuotaPersistenceMiddleware {
   private unsubscribe: (() => void) | null = null;
   private isPreloading = false;
@@ -257,10 +262,10 @@ class QuotaPersistenceMiddleware {
 
     const setterName = getQuotaProviderSetterName(provider);
     const storeState = useQuotaStore.getState();
-    const setter = storeState[setterName];
+    const setter = storeState[setterName] as unknown as (updater: QuotaMapUpdater) => void;
 
     if (typeof setter === 'function') {
-      setter((prev: Record<string, any>) => {
+      setter((prev) => {
         let changed = false;
         const next = { ...prev };
         cached.forEach((entry, fileName) => {
@@ -312,7 +317,7 @@ class QuotaPersistenceMiddleware {
    * Get quota map from state by provider
    */
   private getQuotaMap(
-    state: any,
+    state: QuotaStoreState,
     provider: QuotaProviderType
   ): Record<string, QuotaStatusState> | null {
     const mapName = getQuotaProviderMapName(provider);

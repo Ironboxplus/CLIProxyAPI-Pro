@@ -160,11 +160,271 @@ def replace_go_call_block(path: Path, call_start: str, new_block: str, present: 
 
 MODULE_PATH = module_path()
 
+usage_manager = ROOT / 'sdk/cliproxy/usage/manager.go'
+replace_once(
+    usage_manager,
+    'type serviceTierContextKey struct{}\n',
+    'type serviceTierContextKey struct{}\ntype streamContextKey struct{}\n',
+)
+insert_before(
+    usage_manager,
+    '// WithServiceTier stores the client-requested service tier for usage sinks.\n',
+    '''// WithStream stores whether the client requested streaming output for usage sinks.
+func WithStream(ctx context.Context, stream bool) context.Context {
+\tif ctx == nil {
+\t\tctx = context.Background()
+\t}
+\treturn context.WithValue(ctx, streamContextKey{}, stream)
+}
+
+// StreamFromContext returns whether the client requested streaming output.
+func StreamFromContext(ctx context.Context) bool {
+\tif ctx == nil {
+\t\treturn false
+\t}
+\tstream, _ := ctx.Value(streamContextKey{}).(bool)
+\treturn stream
+}
+
+''',
+    'func WithStream(ctx context.Context, stream bool) context.Context',
+)
+
+auth_conductor = ROOT / 'sdk/cliproxy/auth/conductor.go'
+replace_once(
+    auth_conductor,
+    '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n',
+    '\tctx = coreusage.WithRequestedModelAlias(ctx, alias)\n\tctx = coreusage.WithStream(ctx, opts.Stream)\n',
+)
+
 config_go = ROOT / 'internal/config/config.go'
 replace_once(
     config_go,
     'DefaultPanelGitHubRepository = "https://github.com/router-for-me/Cli-Proxy-API-Management-Center"',
     f'DefaultPanelGitHubRepository = "{PRO_PANEL_REPOSITORY}"',
+)
+
+sdk_config_go = ROOT / 'internal/config/sdk_config.go'
+replace_once(
+    sdk_config_go,
+    '''\tForceModelPrefix bool `yaml:"force-model-prefix" json:"force-model-prefix"`
+
+\t// RequestLog enables or disables detailed request logging functionality.
+''',
+    '''\tForceModelPrefix bool `yaml:"force-model-prefix" json:"force-model-prefix"`
+
+\t// ClaudeModelIDCloakMode controls whether non-Claude model IDs are disguised in
+\t// Anthropic-compatible model listings. Supported values are auto, always, and never.
+\t// Empty and invalid values use auto, which cloaks only identified Claude Desktop clients.
+\tClaudeModelIDCloakMode string `yaml:"claude-model-id-cloak-mode,omitempty" json:"claude-model-id-cloak-mode,omitempty"`
+
+\t// RequestLog enables or disables detailed request logging functionality.
+''',
+)
+
+claude_model_util = ROOT / 'internal/util/claude_model.go'
+replace_once(
+    claude_model_util,
+    'import "strings"\n',
+    '''import (
+\t"net/http"
+\t"strings"
+)
+''',
+)
+insert_before(
+    claude_model_util,
+    '// EnsureClaudeModelIDPrefix rewrites model IDs for Anthropic /models listings.\n',
+    '''const (
+\tClaudeModelIDCloakModeAuto   = "auto"
+\tClaudeModelIDCloakModeAlways = "always"
+\tClaudeModelIDCloakModeNever  = "never"
+)
+
+// ShouldCloakClaudeModelIDs reports whether an Anthropic-compatible model listing
+// should disguise non-Claude model IDs for the current client.
+func ShouldCloakClaudeModelIDs(mode string, headers http.Header) bool {
+\tswitch strings.ToLower(strings.TrimSpace(mode)) {
+\tcase ClaudeModelIDCloakModeAlways:
+\t\treturn true
+\tcase ClaudeModelIDCloakModeNever:
+\t\treturn false
+\tdefault:
+\t\treturn isClaudeDesktopModelClient(headers)
+\t}
+}
+
+func isClaudeDesktopModelClient(headers http.Header) bool {
+\tif headers == nil {
+\t\treturn false
+\t}
+\tfor _, value := range []string{
+\t\theaders.Get("User-Agent"),
+\t\theaders.Get("X-Client-Name"),
+\t\theaders.Get("X-Application-Name"),
+\t} {
+\t\tcompact := strings.NewReplacer("-", "", "_", "", " ", "").Replace(strings.ToLower(strings.TrimSpace(value)))
+\t\tif strings.Contains(compact, "claudedesktop") {
+\t\t\treturn true
+\t\t}
+\t}
+\treturn false
+}
+
+''',
+    'func ShouldCloakClaudeModelIDs(mode string, headers http.Header) bool',
+)
+
+claude_handler = ROOT / 'sdk/api/handlers/claude/code_handlers.go'
+replace_once(
+    claude_handler,
+    '''func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
+\tmodels := h.Models()
+\tfor i := range models {
+\t\tif id, ok := models[i]["id"].(string); ok {
+\t\t\tmodels[i]["id"] = util.EnsureClaudeModelIDPrefix(id)
+\t\t}
+\t}
+''',
+    '''func (h *ClaudeCodeAPIHandler) ClaudeModels(c *gin.Context) {
+\tmodels := h.Models()
+\tmode := ""
+\tif h != nil && h.BaseAPIHandler != nil && h.Cfg != nil {
+\t\tmode = h.Cfg.ClaudeModelIDCloakMode
+\t}
+\tvar headers http.Header
+\tif c != nil && c.Request != nil {
+\t\theaders = c.Request.Header
+\t}
+\tif util.ShouldCloakClaudeModelIDs(mode, headers) {
+\t\tfor i := range models {
+\t\t\tif id, ok := models[i]["id"].(string); ok {
+\t\t\t\tmodels[i]["id"] = util.EnsureClaudeModelIDPrefix(id)
+\t\t\t}
+\t\t}
+\t}
+''',
+)
+
+claude_model_util_test = ROOT / 'internal/util/claude_model_test.go'
+replace_once(
+    claude_model_util_test,
+    'import "testing"\n',
+    '''import (
+\t"net/http"
+\t"testing"
+)
+''',
+)
+if 'func TestShouldCloakClaudeModelIDs' not in read(claude_model_util_test):
+    write(claude_model_util_test, read(claude_model_util_test).rstrip() + '''
+
+func TestShouldCloakClaudeModelIDs(t *testing.T) {
+\ttests := []struct {
+\t\tname    string
+\t\tmode    string
+\t\theaders http.Header
+\t\twant    bool
+\t}{
+\t\t{name: "auto detects desktop user agent", mode: "auto", headers: http.Header{"User-Agent": []string{"Claude-Desktop/1.0"}}, want: true},
+\t\t{name: "auto detects desktop client header", mode: "auto", headers: http.Header{"X-Client-Name": []string{"Claude Desktop"}}, want: true},
+\t\t{name: "auto leaves claude code unchanged", mode: "auto", headers: http.Header{"User-Agent": []string{"claude-cli/2.1.44"}}, want: false},
+\t\t{name: "auto leaves generic anthropic client unchanged", mode: "auto", headers: http.Header{"User-Agent": []string{"Zed/1.0"}}, want: false},
+\t\t{name: "empty defaults to auto", headers: http.Header{"User-Agent": []string{"ClaudeDesktop/1.0"}}, want: true},
+\t\t{name: "always cloaks generic clients", mode: "always", headers: http.Header{"User-Agent": []string{"Zed/1.0"}}, want: true},
+\t\t{name: "never leaves desktop unchanged", mode: "never", headers: http.Header{"User-Agent": []string{"Claude-Desktop/1.0"}}, want: false},
+\t}
+
+\tfor _, tt := range tests {
+\t\tt.Run(tt.name, func(t *testing.T) {
+\t\t\tif got := ShouldCloakClaudeModelIDs(tt.mode, tt.headers); got != tt.want {
+\t\t\t\tt.Fatalf("ShouldCloakClaudeModelIDs(%q, %v) = %t, want %t", tt.mode, tt.headers, got, tt.want)
+\t\t\t}
+\t\t})
+\t}
+}
+''' + '\n')
+
+claude_handler_test = ROOT / 'sdk/api/handlers/claude/code_handlers_model_test.go'
+add_go_import(claude_handler_test, '"encoding/json"\n', '\t"net/http"\n')
+add_go_import(claude_handler_test, '"' + import_path('sdk/api/handlers') + '"\n', '\t"' + import_path('sdk/config') + '"\n')
+if 'func TestClaudeModelsCloakMode' not in read(claude_handler_test):
+    write(claude_handler_test, read(claude_handler_test).rstrip() + '''
+
+func TestClaudeModelsCloakMode(t *testing.T) {
+\tconst clientID = "claude-model-id-cloak-mode-test"
+\tregistryRef := registry.GetGlobalRegistry()
+\tregistryRef.RegisterClient(clientID, "claude", []*registry.ModelInfo{{
+\t\tID: "gpt-4o", Object: "model", OwnedBy: "openai", DisplayName: "GPT-4o",
+\t}})
+\tt.Cleanup(func() {
+\t\tregistryRef.UnregisterClient(clientID)
+\t})
+
+\ttests := []struct {
+\t\tname       string
+\t\tmode       string
+\t\tuserAgent  string
+\t\tclientName string
+\t\twantID     string
+\t}{
+\t\t{name: "auto cloaks desktop", mode: "auto", userAgent: "Claude-Desktop/1.0", wantID: "claude-fable-5-dd-o4-tpg"},
+\t\t{name: "auto cloaks desktop client header", mode: "auto", clientName: "Claude Desktop", wantID: "claude-fable-5-dd-o4-tpg"},
+\t\t{name: "auto keeps claude code raw", mode: "auto", userAgent: "claude-cli/2.1.44", wantID: "gpt-4o"},
+\t\t{name: "auto keeps generic client raw", mode: "auto", userAgent: "Zed/1.0", wantID: "gpt-4o"},
+\t\t{name: "always cloaks generic client", mode: "always", userAgent: "Zed/1.0", wantID: "claude-fable-5-dd-o4-tpg"},
+\t\t{name: "never keeps desktop raw", mode: "never", userAgent: "Claude-Desktop/1.0", wantID: "gpt-4o"},
+\t}
+
+\tfor _, tt := range tests {
+\t\tt.Run(tt.name, func(t *testing.T) {
+\t\t\trecorder := httptest.NewRecorder()
+\t\t\tctx, _ := gin.CreateTestContext(recorder)
+\t\t\tctx.Request = httptest.NewRequest(http.MethodGet, "/v1/models", nil)
+\t\t\tif tt.userAgent != "" {
+\t\t\t\tctx.Request.Header.Set("User-Agent", tt.userAgent)
+\t\t\t}
+\t\t\tif tt.clientName != "" {
+\t\t\t\tctx.Request.Header.Set("X-Client-Name", tt.clientName)
+\t\t\t}
+
+\t\t\thandler := NewClaudeCodeAPIHandler(&handlers.BaseAPIHandler{
+\t\t\t\tCfg: &config.SDKConfig{ClaudeModelIDCloakMode: tt.mode},
+\t\t\t})
+\t\t\thandler.ClaudeModels(ctx)
+
+\t\t\tvar response struct {
+\t\t\t\tData []struct {
+\t\t\t\t\tID string `json:"id"`
+\t\t\t\t} `json:"data"`
+\t\t\t}
+\t\t\tif errUnmarshal := json.Unmarshal(recorder.Body.Bytes(), &response); errUnmarshal != nil {
+\t\t\t\tt.Fatalf("decode response: %v", errUnmarshal)
+\t\t\t}
+\t\t\tfor _, model := range response.Data {
+\t\t\t\tif model.ID == tt.wantID {
+\t\t\t\t\treturn
+\t\t\t\t}
+\t\t\t}
+\t\t\tt.Fatalf("model %q not found in response: %s", tt.wantID, recorder.Body.String())
+\t\t})
+\t}
+}
+''' + '\n')
+
+routing_protection_config = ROOT / 'internal/config/routing_protection_config.go'
+write_text(routing_protection_config, read_text(Path(__file__).resolve().parent / 'routing_protection_config.go'))
+replace_once(
+    config_go,
+    '''\tSessionAffinityTTL string `yaml:"session-affinity-ttl,omitempty" json:"session-affinity-ttl,omitempty"`
+}
+''',
+    '''\tSessionAffinityTTL string `yaml:"session-affinity-ttl,omitempty" json:"session-affinity-ttl,omitempty"`
+
+\t// RequestProtection controls request-driven provider credential disabling.
+\tRequestProtection RequestProtectionConfig `yaml:"request-protection,omitempty" json:"request-protection,omitempty"`
+}
+''',
 )
 
 config_example = ROOT / 'config.example.yaml'
@@ -221,6 +481,43 @@ insert_before(
 
 ''',
     '    cpa-sensitive:\n',
+)
+replace_once(
+    config_example,
+    '''# "auto" behavior (cloak only non-Claude-Code clients).
+disable-claude-cloak-mode: false
+
+# disable-image-generation supports: false (default), true, "chat", or "passthrough".
+''',
+    '''# "auto" behavior (cloak only non-Claude-Code clients).
+disable-claude-cloak-mode: false
+
+# Controls whether non-Claude model IDs are disguised in Anthropic-compatible /v1/models responses.
+# - "auto" (default): disguise IDs only for identified Claude Desktop clients.
+# - "always": disguise IDs for every Anthropic-compatible model-list request (upstream legacy behavior).
+# - "never": always return the original model IDs.
+claude-model-id-cloak-mode: "auto"
+
+# disable-image-generation supports: false (default), true, "chat", or "passthrough".
+''',
+)
+
+config_diff = ROOT / 'internal/watcher/diff/config_diff.go'
+replace_once(
+    config_diff,
+    '''\tif oldCfg.DisableClaudeCloakMode != newCfg.DisableClaudeCloakMode {
+\t\tchanges = append(changes, fmt.Sprintf("disable-claude-cloak-mode: %t -> %t", oldCfg.DisableClaudeCloakMode, newCfg.DisableClaudeCloakMode))
+\t}
+\tif oldCfg.DisableImageGeneration != newCfg.DisableImageGeneration {
+''',
+    '''\tif oldCfg.DisableClaudeCloakMode != newCfg.DisableClaudeCloakMode {
+\t\tchanges = append(changes, fmt.Sprintf("disable-claude-cloak-mode: %t -> %t", oldCfg.DisableClaudeCloakMode, newCfg.DisableClaudeCloakMode))
+\t}
+\tif strings.TrimSpace(oldCfg.ClaudeModelIDCloakMode) != strings.TrimSpace(newCfg.ClaudeModelIDCloakMode) {
+\t\tchanges = append(changes, fmt.Sprintf("claude-model-id-cloak-mode: %s -> %s", strings.TrimSpace(oldCfg.ClaudeModelIDCloakMode), strings.TrimSpace(newCfg.ClaudeModelIDCloakMode)))
+\t}
+\tif oldCfg.DisableImageGeneration != newCfg.DisableImageGeneration {
+''',
 )
 
 insert_before(
@@ -1197,6 +1494,8 @@ auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
 api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
 management_scheduler = ROOT / 'internal/api/handlers/management/account_inspection_scheduler.go'
 management_scheduler_test = ROOT / 'internal/api/handlers/management/account_inspection_scheduler_test.go'
+routing_policy = ROOT / 'internal/api/handlers/management/routing_policy.go'
+routing_policy_test = ROOT / 'internal/api/handlers/management/routing_policy_test.go'
 scheduler_source = Path('/tmp/account_inspection_scheduler.go')
 if not scheduler_source.is_file():
     scheduler_source = Path(__file__).resolve().parent / 'account_inspection_scheduler.go'
@@ -1204,6 +1503,198 @@ write_text(management_scheduler, re.sub(r'github\.com/router-for-me/CLIProxyAPI/
 scheduler_test_source = Path(__file__).resolve().parent / 'account_inspection_scheduler_test.go'
 if scheduler_test_source.is_file():
     write_text(management_scheduler_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(scheduler_test_source)))
+write_text(routing_policy, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy.go')))
+write_text(routing_policy_test, re.sub(r'github\.com/router-for-me/CLIProxyAPI/v\d+', MODULE_PATH, read_text(Path(__file__).resolve().parent / 'routing_policy_test.go')))
+
+replace_once(
+    server,
+    '''\tif isClaude {
+\t\tout := formatHomeClaudeModels(entries)
+''',
+    '''\tif isClaude {
+\t\tmode := ""
+\t\tif s != nil && s.cfg != nil {
+\t\t\tmode = s.cfg.ClaudeModelIDCloakMode
+\t\t}
+\t\tvar headers http.Header
+\t\tif c != nil && c.Request != nil {
+\t\t\theaders = c.Request.Header
+\t\t}
+\t\tout := formatHomeClaudeModels(entries, util.ShouldCloakClaudeModelIDs(mode, headers))
+''',
+)
+replace_once(
+    server,
+    '''func formatHomeClaudeModels(entries []homeModelEntry) []map[string]any {
+\tout := make([]map[string]any, 0, len(entries))
+\tfor _, entry := range entries {
+\t\tout = append(out, formatHomeClaudeModel(entry))
+''',
+    '''func formatHomeClaudeModels(entries []homeModelEntry, cloakModelIDs bool) []map[string]any {
+\tout := make([]map[string]any, 0, len(entries))
+\tfor _, entry := range entries {
+\t\tout = append(out, formatHomeClaudeModel(entry, cloakModelIDs))
+''',
+)
+replace_once(
+    server,
+    '''func formatHomeClaudeModel(entry homeModelEntry) map[string]any {
+\tdisplayName := entry.displayName
+''',
+    '''func formatHomeClaudeModel(entry homeModelEntry, cloakModelID bool) map[string]any {
+\tdisplayName := entry.displayName
+''',
+)
+replace_once(
+    server,
+    '''\tmodel := map[string]any{
+\t\t"id":               util.EnsureClaudeModelIDPrefix(entry.id),
+''',
+    '''\tmodelID := entry.id
+\tif cloakModelID {
+\t\tmodelID = util.EnsureClaudeModelIDPrefix(modelID)
+\t}
+\tmodel := map[string]any{
+\t\t"id":               modelID,
+''',
+)
+
+server_test = ROOT / 'internal/api/server_test.go'
+replace_once(
+    server_test,
+    '''\t\tvar claudeModel map[string]any
+\t\tvar rewrittenModel map[string]any
+\t\tfor _, m := range resp.Data {
+\t\t\tid, _ := m["id"].(string)
+\t\t\tswitch id {
+\t\t\tcase "claude-sonnet-4-6":
+\t\t\t\tclaudeModel = m
+\t\t\tcase "claude-fable-5-dd-o4-tpg":
+\t\t\t\trewrittenModel = m
+\t\t\tcase "gpt-4o", "claude-gpt-4o":
+\t\t\t\tt.Fatalf("expected non-claude model id to be rewritten as claude-fable-5-dd-<reversed>, got %q", id)
+\t\t\t}
+\t\t}
+\t\tif claudeModel == nil {
+\t\t\tt.Fatalf("expected claude-sonnet-4-6 in response, got %s", rr.Body.String())
+\t\t}
+\t\tif rewrittenModel == nil {
+\t\t\tt.Fatalf("expected claude-fable-5-dd-o4-tpg in response, got %s", rr.Body.String())
+\t\t}
+''',
+    '''\t\tvar claudeModel map[string]any
+\t\tvar rawModel map[string]any
+\t\tfor _, m := range resp.Data {
+\t\t\tid, _ := m["id"].(string)
+\t\t\tswitch id {
+\t\t\tcase "claude-sonnet-4-6":
+\t\t\t\tclaudeModel = m
+\t\t\tcase "gpt-4o":
+\t\t\t\trawModel = m
+\t\t\tcase "claude-gpt-4o", "claude-fable-5-dd-o4-tpg":
+\t\t\t\tt.Fatalf("did not expect generic Anthropic client model id to be cloaked, got %q", id)
+\t\t\t}
+\t\t}
+\t\tif claudeModel == nil {
+\t\t\tt.Fatalf("expected claude-sonnet-4-6 in response, got %s", rr.Body.String())
+\t\t}
+\t\tif rawModel == nil {
+\t\t\tt.Fatalf("expected raw gpt-4o in response, got %s", rr.Body.String())
+\t\t}
+''',
+)
+replace_once(
+    server_test,
+    '''\t\tmaxCompletionTokens: 64000,
+\t})
+''',
+    '''\t\tmaxCompletionTokens: 64000,
+\t}, true)
+''',
+)
+replace_once(
+    server_test,
+    'withDefaults := formatHomeClaudeModel(homeModelEntry{id: "claude-no-limits"})\n',
+    'withDefaults := formatHomeClaudeModel(homeModelEntry{id: "claude-no-limits"}, true)\n',
+)
+replace_once(
+    server_test,
+    'prefixed := formatHomeClaudeModel(homeModelEntry{id: "gpt-4o", displayName: "GPT-4o"})\n',
+    'prefixed := formatHomeClaudeModel(homeModelEntry{id: "gpt-4o", displayName: "GPT-4o"}, true)\n',
+)
+replace_once(
+    server_test,
+    '''\tif got := prefixed["display_name"]; got != "GPT-4o" {
+\t\tt.Fatalf("display_name = %v, want GPT-4o", got)
+\t}
+''',
+    '''\tif got := prefixed["display_name"]; got != "GPT-4o" {
+\t\tt.Fatalf("display_name = %v, want GPT-4o", got)
+\t}
+\traw := formatHomeClaudeModel(homeModelEntry{id: "gpt-4o", displayName: "GPT-4o"}, false)
+\tif got := raw["id"]; got != "gpt-4o" {
+\t\tt.Fatalf("raw id = %v, want gpt-4o", got)
+\t}
+''',
+)
+replace_once(
+    server_test,
+    '''\tout := formatHomeClaudeModels([]homeModelEntry{
+\t\t{id: "claude-z", displayName: "Zebra"},
+\t\t{id: "gpt-4o", displayName: "Alpha"},
+\t\t{id: "claude-b", displayName: "Beta"},
+\t})
+''',
+    '''\tout := formatHomeClaudeModels([]homeModelEntry{
+\t\t{id: "claude-z", displayName: "Zebra"},
+\t\t{id: "gpt-4o", displayName: "Alpha"},
+\t\t{id: "claude-b", displayName: "Beta"},
+\t}, true)
+''',
+)
+
+replace_once(
+    auth_files,
+    '''\tmetadata["disabled"] = disabled
+\traw, errMarshal := json.Marshal(metadata)
+''',
+    '''\tmetadata["disabled"] = disabled
+\tdelete(metadata, routingProtectionMetadataKey)
+\traw, errMarshal := json.Marshal(metadata)
+''',
+)
+replace_once(
+    auth_files,
+    '''\tif auth.Metadata == nil {
+\t\tauth.Metadata = make(map[string]any)
+\t}
+\tauth.Metadata["disabled"] = disabled
+}
+''',
+    '''\tif auth.Metadata == nil {
+\t\tauth.Metadata = make(map[string]any)
+\t}
+\tauth.Metadata["disabled"] = disabled
+\tclearRoutingProtectionOwnership(auth)
+}
+''',
+)
+replace_once(
+    auth_files,
+    '''func syncAuthFileDisabledState(auth *coreauth.Auth) {
+\tif auth == nil {
+\t\treturn
+\t}
+\tdisabled, ok := authFileBoolValue(auth.Metadata["disabled"])
+''',
+    '''func syncAuthFileDisabledState(auth *coreauth.Auth) {
+\tif auth == nil {
+\t\treturn
+\t}
+\tdisabled, ok := authFileBoolValue(auth.Metadata["disabled"])
+\tclearRoutingProtectionOwnership(auth)
+''',
+)
 
 replace_once(
     api_tools,
@@ -1737,7 +2228,7 @@ replace_once(
 replace_once(
     server,
     '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n''',
-    '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n''',
+    '''\t\tmgmt.POST("/api-call", s.mgmt.APICall)\n\t\ts.mgmt.RegisterAccountInspectionRoutes(mgmt)\n\t\ts.mgmt.RegisterRoutingPolicyRoutes(mgmt)\n''',
 )
 
 handler = ROOT / 'internal/api/handlers/management/handler.go'
@@ -2465,8 +2956,17 @@ subprocess.run([
     'gofmt',
     '-w',
     'cmd/server/main.go',
+    'internal/api/server.go',
+    'internal/api/server_test.go',
+    'internal/config/sdk_config.go',
     'internal/logging/requestid.go',
     'internal/logging/requestmeta.go',
+    'internal/util/claude_model.go',
+    'internal/util/claude_model_test.go',
+    'internal/watcher/diff/config_diff.go',
+    'internal/api/handlers/management/routing_policy.go',
+    'internal/api/handlers/management/routing_policy_test.go',
+    'internal/config/routing_protection_config.go',
     'internal/pluginhost/gemini_cli_storage_compat.go',
     'internal/pluginhost/gemini_cli_storage_compat_test.go',
     'internal/pluginstore/autoinstall.go',
@@ -2484,5 +2984,7 @@ subprocess.run([
     'sdk/api/handlers/handlers.go',
     'sdk/api/handlers/handlers_cpa_sensitive_metadata_test.go',
     'internal/api/handlers/management/oauth_codex_plan_type_test.go',
+    'sdk/api/handlers/claude/code_handlers.go',
+    'sdk/api/handlers/claude/code_handlers_model_test.go',
 ], cwd=ROOT, check=True)
 subprocess.run(['go', 'mod', 'tidy'], cwd=ROOT, check=True)

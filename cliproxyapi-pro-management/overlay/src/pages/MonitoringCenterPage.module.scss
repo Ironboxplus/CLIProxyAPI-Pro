@@ -483,8 +483,7 @@
   white-space: nowrap;
 }
 
-.inlineMetrics,
-.savedPricesActions {
+.inlineMetrics {
   display: flex;
   flex-wrap: wrap;
   gap: 6px;
@@ -2618,9 +2617,7 @@
   box-shadow: var(--shadow);
 }
 
-.summaryLabel,
-.savedPricesHeader,
-.priceField label {
+.summaryLabel {
   color: var(--monitor-muted);
   font-size: 13px;
   font-weight: 500;
@@ -2759,6 +2756,82 @@
   background: var(--monitor-surface-elevated);
 }
 
+.settingsDangerSection {
+  border-color: color-mix(in srgb, var(--monitor-red) 32%, var(--monitor-line));
+}
+
+.settingsDangerAction {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  padding-top: 12px;
+  border-top: 1px solid color-mix(in srgb, var(--monitor-red) 18%, var(--monitor-line));
+}
+
+.settingsDangerAction > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.settingsDangerAction > div > span {
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
+.settingsDangerAction strong {
+  color: var(--monitor-ink);
+  font-size: 16px;
+}
+
+.settingsDangerAction :global(button) {
+  flex: 0 0 auto;
+}
+
+.resetStatisticsButton:global(.btn-danger) {
+  min-height: 40px;
+  padding-inline: 16px;
+  border-color: var(--monitor-red);
+  background: var(--monitor-red);
+  color: #fff;
+  box-shadow: 0 8px 18px -12px color-mix(in srgb, var(--monitor-red) 78%, transparent);
+}
+
+.resetStatisticsButton:global(.btn-danger) > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: inherit;
+  line-height: 1.2;
+}
+
+.resetStatisticsButton:global(.btn-danger) svg {
+  flex: 0 0 auto;
+  color: inherit;
+  stroke: currentColor;
+}
+
+.resetStatisticsButton:global(.btn-danger):hover:not(:disabled) {
+  border-color: color-mix(in srgb, var(--monitor-red) 86%, #000);
+  background: color-mix(in srgb, var(--monitor-red) 86%, #000);
+  color: #fff;
+  box-shadow: 0 10px 22px -12px color-mix(in srgb, var(--monitor-red) 88%, transparent);
+  transform: translateY(-1px);
+}
+
+.resetStatisticsButton:global(.btn-danger):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--monitor-red) 28%, transparent);
+  outline-offset: 2px;
+}
+
+.resetStatisticsButton:global(.btn-danger):disabled {
+  color: #fff;
+  opacity: 0.68;
+  transform: none;
+}
+
 .settingsSectionHeader {
   display: grid;
   gap: 4px;
@@ -2826,49 +2899,21 @@
   accent-color: var(--monitor-accent);
 }
 
-.priceEditor {
-  margin-top: 14px;
-  display: grid;
-  gap: 14px;
-}
-
-.priceGrid {
-  display: grid;
-  grid-template-columns: repeat(12, minmax(0, 1fr));
-  align-items: end;
-  gap: 12px;
-}
-
 .priceField {
   display: grid;
-  gap: 8px;
+  gap: 7px;
   min-width: 0;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  font-weight: 700;
 }
 
 .priceField :global(.form-group) {
   margin-bottom: 0;
 }
 
-.priceField :global(.input) {
-  min-height: 44px;
-}
-
-.priceField input,
-.priceField button {
-  min-height: 44px;
-}
-
-.priceFieldModel {
-  grid-column: span 5;
-}
-
-.priceFieldPrompt {
-  grid-column: span 7;
-}
-
-.priceFieldCompletion,
-.priceFieldCache {
-  grid-column: span 6;
+.priceField input {
+  min-height: 40px;
 }
 
 .priceActionsBar {
@@ -2878,101 +2923,1001 @@
   gap: 10px;
 }
 
-.savedPricesList {
-  margin-top: 14px;
+.priceManagerModal :global(.modal-body) {
+  max-height: min(72vh, 640px);
+  overflow: hidden;
+  padding: 0;
+}
+
+.priceManager {
   display: grid;
-  gap: 10px;
+  grid-template-rows: auto minmax(0, 1fr);
+  background: var(--monitor-surface);
 }
 
-.savedPricesHeader {
-  color: var(--monitor-ink);
-  font-size: 14px;
+.priceManagerTabs {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-height: 52px;
+  padding: 8px 20px 0;
+  border-bottom: 1px solid var(--monitor-line);
+}
+
+.priceManagerTab {
+  position: relative;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  align-self: stretch;
+  min-width: 112px;
+  padding: 0 14px 7px;
+  border: 0;
+  background: transparent;
+  color: var(--monitor-muted);
+  font-size: 13px;
   font-weight: 700;
-  letter-spacing: -0.01em;
-  text-transform: none;
+  cursor: pointer;
 }
 
-.savedPricesTableWrap {
-  overflow-x: auto;
-  border: 1px solid color-mix(in srgb, var(--monitor-line-strong) 30%, var(--monitor-line));
-  border-radius: 16px;
-  background:
-    linear-gradient(
-      180deg,
-      color-mix(in srgb, var(--monitor-surface-elevated) 90%, white 10%),
-      var(--monitor-surface)
-    );
+.priceManagerTab::after {
+  content: '';
+  position: absolute;
+  right: 10px;
+  bottom: -1px;
+  left: 10px;
+  height: 2px;
+  border-radius: 2px 2px 0 0;
+  background: transparent;
 }
 
-.savedPricesTable {
+.priceManagerTab > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 22px;
+  height: 20px;
+  padding: 0 6px;
+  border-radius: 999px;
+  background: var(--monitor-surface-muted);
+  color: var(--monitor-muted);
+  font-size: 11px;
+}
+
+.priceManagerTab:hover {
+  color: var(--monitor-ink);
+}
+
+.priceManagerTabActive {
+  color: var(--monitor-accent);
+}
+
+.priceManagerTabActive::after {
+  background: var(--monitor-accent);
+}
+
+.priceManagerTabActive > span {
+  background: color-mix(in srgb, var(--monitor-accent) 13%, var(--monitor-surface));
+  color: var(--monitor-accent);
+}
+
+.priceRuleWorkspace {
+  display: grid;
+  grid-template-columns: 260px minmax(0, 1fr);
+  height: min(64vh, 560px);
+  min-height: 0;
+  overflow: hidden;
+}
+
+.priceRuleSidebar {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  min-width: 0;
+  overflow: hidden;
+  border-right: 1px solid var(--monitor-line);
+  background: color-mix(in srgb, var(--monitor-surface-muted) 68%, var(--monitor-surface));
+}
+
+.priceRuleSearch {
+  position: relative;
+  padding: 14px;
+  border-bottom: 1px solid color-mix(in srgb, var(--monitor-line) 72%, transparent);
+}
+
+.priceRuleSearch > svg {
+  position: absolute;
+  z-index: 1;
+  top: 50%;
+  left: 26px;
+  color: var(--monitor-muted);
+  pointer-events: none;
+  transform: translateY(-50%);
+}
+
+.priceRuleSearch :global(.form-group) {
+  margin: 0;
+}
+
+.priceRuleSearch input {
+  min-height: 38px;
+  padding-left: 34px;
+  background: var(--monitor-surface);
+}
+
+.priceRuleList {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+  padding: 8px;
+}
+
+.priceRuleListItem {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 10px;
   width: 100%;
-  min-width: 720px;
-  border-collapse: collapse;
+  min-height: 58px;
+  padding: 10px 11px;
+  border: 1px solid transparent;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--monitor-ink);
+  text-align: left;
+  cursor: pointer;
 }
 
-.savedPricesTable thead th {
-  padding: 12px 14px 10px;
-  border-bottom: 1px solid color-mix(in srgb, var(--monitor-line) 90%, transparent);
-  background: color-mix(in srgb, var(--monitor-accent) 10%, var(--monitor-surface-muted));
+.priceRuleListItem:hover {
+  background: var(--monitor-surface-hover);
+}
+
+.priceRuleListItemActive {
+  border-color: color-mix(in srgb, var(--monitor-accent) 32%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-accent) 9%, var(--monitor-surface));
+}
+
+.priceRuleListIdentity,
+.priceRuleListMeta {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.priceRuleListIdentity strong,
+.priceUnmatchedList strong {
+  overflow: hidden;
+  font-size: 13px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priceRuleListIdentity small,
+.priceRuleListMeta small,
+.priceUnmatchedList small {
+  overflow: hidden;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priceRuleListMeta {
+  justify-items: end;
+  text-align: right;
+}
+
+.priceRuleConfigured,
+.priceRuleUnconfigured {
+  display: inline-flex;
+  align-items: center;
+  width: max-content;
+  min-height: 20px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 10px;
+  font-weight: 800;
+  white-space: nowrap;
+}
+
+.priceRuleConfigured {
+  background: color-mix(in srgb, var(--monitor-green) 13%, var(--monitor-surface));
+  color: color-mix(in srgb, var(--monitor-green) 82%, var(--monitor-ink));
+}
+
+.priceRuleUnconfigured {
+  background: color-mix(in srgb, var(--monitor-amber) 14%, var(--monitor-surface));
+  color: color-mix(in srgb, var(--monitor-amber) 76%, var(--monitor-ink));
+}
+
+.priceRuleListEmpty,
+.priceRuleEditorEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 140px;
+  padding: 24px;
+  color: var(--monitor-muted);
+  font-size: 13px;
+  text-align: center;
+}
+
+.priceRuleEditorEmpty {
+  grid-row: 1 / -1;
+}
+
+.priceRuleEditorPane {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  min-width: 0;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.priceRuleEditorHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 72px;
+  padding: 14px 20px;
+  border-bottom: 1px solid var(--monitor-line);
+}
+
+.priceRuleEditorHeader > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.priceRuleEditorHeader h3,
+.priceSyncHeader h3 {
+  overflow: hidden;
+  margin: 0;
+  color: var(--monitor-ink);
+  font-size: 16px;
+  font-weight: 750;
+  line-height: 1.3;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priceRuleEditorHeader > div:first-child > span,
+.priceSyncHeader > div:first-child > div > span {
+  color: var(--monitor-muted);
+  font-size: 12px;
+}
+
+.priceRuleEditorBadges {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 6px;
+}
+
+.priceRuleEditorBadges > span:not(.priceRuleConfigured):not(.priceRuleUnconfigured) {
+  display: inline-flex;
+  align-items: center;
+  min-height: 20px;
+  padding: 0 7px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 999px;
   color: var(--monitor-muted);
   font-size: 10px;
   font-weight: 700;
-  letter-spacing: 0.08em;
-  line-height: 1.2;
-  text-align: left;
-  text-transform: uppercase;
-  white-space: nowrap;
 }
 
-.savedPricesTable tbody td {
-  padding: 13px 14px;
-  border-top: 1px solid color-mix(in srgb, var(--monitor-line) 86%, transparent);
+.priceRuleEditorScroll {
+  min-height: 0;
+  overflow: auto;
+  overscroll-behavior: contain;
+}
+
+.priceRuleSection {
+  display: grid;
+  gap: 16px;
+  padding: 20px;
+  border-bottom: 1px solid var(--monitor-line);
+}
+
+.priceRuleSection:last-child {
+  border-bottom: 0;
+}
+
+.priceRuleSectionHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.priceRuleSectionHeader > div {
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  min-width: 0;
+}
+
+.priceRuleSectionHeader h4 {
+  margin: 0;
   color: var(--monitor-ink);
-  font-size: 14px;
-  font-weight: 600;
-  line-height: 1.35;
-  white-space: nowrap;
-  background: color-mix(in srgb, var(--monitor-surface) 88%, white 12%);
-  transition: background 0.18s ease;
+  font-size: 13px;
+  font-weight: 800;
 }
 
-.savedPricesTable tbody tr:first-child td {
-  border-top: 0;
+.priceRuleSectionHeader span {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 650;
 }
 
-.savedPricesTable tbody tr:nth-child(odd) td {
-  background: color-mix(in srgb, var(--monitor-accent) 4%, var(--monitor-surface-elevated));
+.priceBaseGrid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
 }
 
-.savedPricesTable tbody tr:nth-child(even) td {
-  background: color-mix(in srgb, var(--monitor-surface) 92%, var(--monitor-surface-elevated));
+.priceTierList {
+  display: grid;
+  gap: 8px;
 }
 
-.savedPricesTable tbody tr:hover td {
-  background: color-mix(in srgb, var(--monitor-accent) 10%, var(--monitor-surface-hover));
+.priceTierCompactRow {
+  display: grid;
+  grid-template-columns: 26px minmax(130px, 1.3fr) repeat(4, minmax(90px, 1fr)) 32px;
+  align-items: end;
+  gap: 8px;
+  padding: 10px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--monitor-surface-muted) 64%, var(--monitor-surface));
 }
 
-.savedPricesTable th:last-child,
-.savedPricesTable td:last-child {
-  text-align: left;
+.priceTierCompactRow label {
+  display: grid;
+  gap: 6px;
+  min-width: 0;
 }
 
-.savedPricesModelCell {
-  min-width: 200px;
-  font-size: 15px;
+.priceTierCompactRow label > span {
+  display: flex;
+  align-items: flex-end;
+  min-height: 24px;
+  color: var(--monitor-muted);
+  font-size: 10px;
   font-weight: 700;
-  letter-spacing: -0.02em;
+  line-height: 1.2;
 }
 
-.savedPricesActionsCell {
-  min-width: 120px;
+.priceTierCompactRow :global(.form-group) {
+  margin: 0;
 }
 
-.savedPricesActions {
-  justify-content: flex-start;
+.priceTierCompactRow input {
+  min-height: 36px;
+  padding-inline: 9px;
+  font-size: 12px;
+}
+
+.priceTierIndex {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: end;
+  width: 24px;
+  height: 36px;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 800;
+}
+
+.priceTierRemoveButton {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  align-self: end;
+  width: 32px;
+  height: 36px;
+  padding: 0;
+  border: 1px solid transparent;
+  border-radius: 7px;
+  background: transparent;
+  color: var(--monitor-muted);
+  cursor: pointer;
+}
+
+.priceTierRemoveButton:hover {
+  border-color: color-mix(in srgb, var(--monitor-red) 20%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-red) 8%, var(--monitor-surface));
+  color: var(--monitor-red);
+}
+
+.priceTierEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 82px;
+  padding: 16px;
+  border: 1px dashed var(--monitor-line);
+  border-radius: 8px;
+  color: var(--monitor-muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.priceRuleEditorFooter {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  min-height: 64px;
+  padding: 12px 20px;
+  border-top: 1px solid var(--monitor-line);
+  background: var(--monitor-surface);
+}
+
+.priceRuleEditorFooter > div {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.priceSyncView {
+  display: grid;
+  grid-auto-rows: max-content;
+  align-content: start;
+  gap: 16px;
+  min-height: 0;
+  max-height: min(64vh, 560px);
+  overflow: auto;
+  padding: 20px;
+}
+
+.priceSyncHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  min-height: 52px;
+}
+
+.priceSyncHeader > div:first-child {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+}
+
+.priceSyncHeader > div:first-child > div {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
+.priceSyncStatusDot {
+  flex: 0 0 auto;
+  width: 10px;
+  height: 10px;
+  border-radius: 999px;
+  background: var(--monitor-muted);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--monitor-muted) 12%, transparent);
+}
+
+.priceSyncStatussyncing {
+  background: var(--monitor-accent);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--monitor-accent) 14%, transparent);
+  animation: monitor-pulse 1.4s ease-in-out infinite;
+}
+
+.priceSyncStatussuccess {
+  background: var(--monitor-green);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--monitor-green) 14%, transparent);
+}
+
+.priceSyncStatuserror {
+  background: var(--monitor-red);
+  box-shadow: 0 0 0 4px color-mix(in srgb, var(--monitor-red) 14%, transparent);
+}
+
+.priceSyncActions {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 8px;
+}
+
+.priceSyncActions :global(.btn) {
+  min-height: 38px;
+}
+
+.priceSyncApplyButton:global(.btn-primary) {
+  border-color: #2563eb;
+  background: #2563eb;
+  color: #fff;
+}
+
+.priceSyncApplyButton:global(.btn-primary):hover:not(:disabled) {
+  border-color: #1d4ed8;
+  background: #1d4ed8;
+  color: #fff;
+}
+
+.priceSyncApplyButton:global(.btn-primary):disabled {
+  border-color: var(--monitor-line-strong);
+  background: var(--monitor-surface-muted);
+  color: var(--monitor-muted);
+  opacity: 1;
+}
+
+.priceSyncApplyButton:global(.btn) > span {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 7px;
+  color: inherit;
+  line-height: 1;
+}
+
+.priceSyncApplyButton:global(.btn) > span svg,
+.priceSyncApplyIcon {
+  display: block;
+  flex: 0 0 auto;
+  color: inherit;
+  fill: none;
+  stroke: currentColor;
+}
+
+.priceSyncMetrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  grid-auto-rows: minmax(78px, max-content);
+  min-height: 80px;
+  overflow: hidden;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface);
+}
+
+.priceSyncMetrics > div {
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 6px;
+  min-height: 78px;
+  padding: 11px 14px;
+  border-right: 1px solid var(--monitor-line);
+  background: color-mix(in srgb, var(--monitor-surface-elevated) 46%, var(--monitor-surface));
+}
+
+.priceSyncMetrics > div:last-child {
+  border-right: 0;
+}
+
+.priceSyncMetrics span {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.priceSyncMetrics strong {
+  color: var(--monitor-ink);
+  font-size: 22px;
+  font-weight: 750;
+  font-variant-numeric: tabular-nums;
+  line-height: 1.2;
+}
+
+.priceSyncMetricadded strong {
+  color: var(--monitor-green);
+}
+
+.priceSyncMetricupdated strong {
+  color: var(--monitor-accent);
+}
+
+.priceSyncMetricunmatched strong {
+  color: var(--monitor-amber);
+}
+
+.priceSyncError {
+  padding: 11px 13px;
+  border: 1px solid color-mix(in srgb, var(--monitor-red) 24%, var(--monitor-line));
+  border-radius: 8px;
+  background: color-mix(in srgb, var(--monitor-red) 7%, var(--monitor-surface));
+  color: var(--monitor-red);
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.priceSyncSchedule {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  padding-top: 14px;
+  border-top: 1px solid var(--monitor-line);
+}
+
+.priceSyncSchedule > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.priceSyncSchedule > div:first-child strong {
+  color: var(--monitor-ink);
+  font-size: 12px;
+  font-weight: 800;
+}
+
+.priceSyncSchedule > div:first-child span,
+.priceSyncScheduleInterval > span {
+  color: var(--monitor-muted);
+  font-size: 10px;
+  line-height: 1.35;
+}
+
+.priceSyncScheduleControls {
+  display: flex;
+  flex: 0 0 auto;
+  align-items: flex-end;
+  gap: 10px;
+}
+
+.priceSyncScheduleToggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--monitor-ink);
+  font-size: 11px;
+  font-weight: 700;
+  min-height: 36px;
+  white-space: nowrap;
+}
+
+.priceSyncScheduleToggle input {
+  width: 16px;
+  height: 16px;
+  accent-color: var(--monitor-accent);
+}
+
+.priceSyncScheduleInterval {
+  display: grid;
+  gap: 4px;
+  width: 138px;
+}
+
+.priceSyncScheduleInterval :global(.form-group) {
+  margin: 0;
+}
+
+.priceSyncScheduleInterval input {
+  min-height: 34px;
+}
+
+.priceSyncChangesSection {
+  display: grid;
+  gap: 10px;
+  min-width: 0;
+}
+
+.priceSyncChangesHeader {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 16px;
+}
+
+.priceSyncChangesHeader > div:first-child {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.priceSyncChangesHeader h4 {
+  margin: 0;
+  color: var(--monitor-ink);
+  font-size: 13px;
+  font-weight: 800;
+}
+
+.priceSyncChangesHeader > div:first-child > span {
+  color: var(--monitor-muted);
+  font-size: 11px;
+}
+
+.priceSyncChangesToolbar {
+  display: flex;
+  flex: 1 1 auto;
+  align-items: center;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+  gap: 8px;
+  min-width: 0;
+}
+
+.priceSyncOverrideAll,
+.priceSyncOverrideOption {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-  flex-wrap: nowrap;
+  color: var(--monitor-muted);
+  font-size: 10px;
+  font-weight: 700;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.priceSyncOverrideAll {
+  min-height: 34px;
+  padding: 0 9px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface-muted);
+}
+
+.priceSyncOverrideAll:has(input:checked) {
+  border-color: color-mix(in srgb, var(--monitor-accent) 34%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-accent) 8%, var(--monitor-surface));
+  color: var(--monitor-accent);
+}
+
+.priceSyncOverrideAll input,
+.priceSyncOverrideOption input {
+  width: 15px;
+  height: 15px;
+  margin: 0;
+  accent-color: var(--monitor-accent);
+}
+
+.priceSyncChangeFilters {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  gap: 3px;
+  padding: 3px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface-muted);
+}
+
+.priceSyncChangeFilters button {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  min-height: 30px;
+  padding: 0 8px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--monitor-muted);
+  font-size: 10px;
+  font-weight: 750;
+  line-height: 1;
+  white-space: nowrap;
+  cursor: pointer;
+}
+
+.priceSyncChangeFilterLabel {
+  display: inline-flex;
+  align-items: center;
+  height: 18px;
+  line-height: 18px;
+}
+
+.priceSyncChangeFilterCount {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 18px;
+  height: 18px;
+  padding: 0 5px;
+  border-radius: 999px;
+  background: color-mix(in srgb, var(--monitor-muted) 10%, transparent);
+  color: inherit;
+  font-size: 9px;
+  font-variant-numeric: tabular-nums;
+  line-height: 18px;
+}
+
+.priceSyncChangeFilters .priceSyncChangeFilterActive {
+  background: var(--monitor-surface);
+  color: var(--monitor-ink);
+  box-shadow: 0 1px 3px color-mix(in srgb, var(--monitor-ink) 12%, transparent);
+}
+
+.priceSyncChangeFilters .priceSyncChangeFilterActive .priceSyncChangeFilterCount {
+  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface));
+  color: var(--monitor-accent);
+}
+
+.priceSyncChangeList {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+  background: var(--monitor-surface);
+}
+
+.priceSyncChangeRow {
+  display: grid;
+  grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1.2fr);
+  align-items: center;
+  gap: 16px;
+  min-height: 62px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--monitor-line);
+}
+
+.priceSyncChangeRow:last-child {
+  border-bottom: 0;
+}
+
+.priceSyncChangeIdentity {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  min-width: 0;
+}
+
+.priceSyncChangeIdentity > div {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
+}
+
+.priceSyncChangeIdentity strong {
+  overflow: hidden;
+  color: var(--monitor-ink);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priceSyncChangeIdentity small,
+.priceSyncChangeHint,
+.priceSyncRateChanges > small {
+  overflow: hidden;
+  color: var(--monitor-muted);
+  font-size: 10px;
+  line-height: 1.35;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.priceSyncChangeBadge {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  min-width: 46px;
+  min-height: 22px;
+  padding: 0 7px;
+  border-radius: 999px;
+  font-size: 9px;
+  font-weight: 800;
+}
+
+.priceSyncChangeadded {
+  background: color-mix(in srgb, var(--monitor-green) 13%, var(--monitor-surface));
+  color: var(--monitor-green);
+}
+
+.priceSyncChangeupdated {
+  background: color-mix(in srgb, var(--monitor-accent) 12%, var(--monitor-surface));
+  color: var(--monitor-accent);
+}
+
+.priceSyncChangeoverridden {
+  background: color-mix(in srgb, var(--monitor-accent) 16%, var(--monitor-surface));
+  color: color-mix(in srgb, var(--monitor-accent) 82%, var(--monitor-ink));
+}
+
+.priceSyncChangelocked {
+  background: color-mix(in srgb, var(--monitor-muted) 12%, var(--monitor-surface));
+  color: var(--monitor-muted);
+}
+
+.priceSyncChangeunmatched {
+  background: color-mix(in srgb, var(--monitor-amber) 14%, var(--monitor-surface));
+  color: color-mix(in srgb, var(--monitor-amber) 78%, var(--monitor-ink));
+}
+
+.priceSyncRateChanges {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 6px 14px;
+  min-width: 0;
+}
+
+.priceSyncRateChanges > div {
+  display: grid;
+  gap: 2px;
+  min-width: 84px;
+}
+
+.priceSyncRateChanges > div > span {
+  color: var(--monitor-muted);
+  font-size: 9px;
+}
+
+.priceSyncRateChanges > div > div {
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  font-size: 10px;
+}
+
+.priceSyncRateChanges del {
+  color: var(--monitor-muted);
+}
+
+.priceSyncRateChanges strong {
+  color: var(--monitor-ink);
+  font-size: 11px;
+}
+
+.priceSyncOverrideOption {
+  min-height: 30px;
+  padding: 0 8px;
+  border: 1px solid var(--monitor-line);
+  border-radius: 7px;
+  background: var(--monitor-surface-muted);
+  color: var(--monitor-ink);
+}
+
+.priceSyncOverrideOption:has(input:checked) {
+  border-color: color-mix(in srgb, var(--monitor-accent) 34%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-accent) 8%, var(--monitor-surface));
+  color: var(--monitor-accent);
+}
+
+.priceSyncChangesEmpty {
+  display: grid;
+  place-items: center;
+  min-height: 72px;
+  padding: 14px;
+  color: var(--monitor-muted);
+  font-size: 11px;
+  text-align: center;
+}
+
+.priceSyncResultSection {
+  display: grid;
+  gap: 12px;
+}
+
+.priceUnmatchedList {
+  display: grid;
+  overflow: hidden;
+  border: 1px solid var(--monitor-line);
+  border-radius: 8px;
+}
+
+.priceUnmatchedList > div:not(.priceTierEmpty) {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  min-height: 54px;
+  padding: 9px 13px;
+  border-bottom: 1px solid var(--monitor-line);
+}
+
+.priceUnmatchedList > div:last-child {
+  border-bottom: 0;
+}
+
+.priceUnmatchedList > .priceTierEmpty {
+  border: 0;
+  border-radius: 0;
+}
+
+.priceUnmatchedList > div > span {
+  display: grid;
+  gap: 3px;
+  min-width: 0;
 }
 
 .tableWrapper {
@@ -3275,9 +4220,163 @@
   white-space: nowrap;
 }
 
-.realtimeMetricHeader,
 .realtimeMetricCell {
+  text-align: left;
+}
+
+.table thead th.realtimeMetricHeader {
+  text-align: left;
+}
+
+.table thead th.realtimeCenterHeader,
+.realtimeCenterCell {
+  text-align: left;
+}
+
+.realtimeCenterCell > * {
+  margin-inline: 0;
+}
+
+.realtimeCostCell {
+  display: inline-flex;
+  align-items: center;
+  justify-content: flex-start;
+  gap: 6px;
+  width: 100%;
+  min-height: 54px;
+  font-variant-numeric: tabular-nums;
+}
+
+.realtimeCostValue {
+  overflow: visible;
+  color: var(--monitor-green);
+  font-weight: 750;
+  line-height: 1.2;
+  text-overflow: clip;
+}
+
+.realtimeCostInfoButton {
+  display: inline-flex;
+  flex: 0 0 auto;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--monitor-muted);
+  cursor: help;
+}
+
+.realtimeCostInfoButton:hover,
+.realtimeCostInfoButton:focus-visible {
+  background: color-mix(in srgb, var(--monitor-accent) 10%, transparent);
+  color: var(--monitor-accent-strong);
+  outline: none;
+}
+
+.realtimeCostInfoButton svg {
+  display: block;
+}
+
+.realtimeCostTooltip {
+  position: fixed;
+  z-index: 12000;
+  width: min(336px, calc(100vw - 24px));
+  max-height: min(420px, calc(100vh - 24px));
+  overflow: visible;
+  padding: 18px 20px;
+  border: 1px solid #334155;
+  border-radius: 12px;
+  background: #060b1a;
+  color: #f8fafc;
+  box-shadow: 0 20px 48px -20px rgba(2, 6, 23, 0.72);
+  pointer-events: none;
+}
+
+.realtimeCostTooltip::before {
+  content: '';
+  position: absolute;
+  top: var(--realtime-cost-arrow-top, 50%);
+  width: 14px;
+  height: 14px;
+  border: solid #334155;
+  background: #060b1a;
+  transform: translateY(-50%) rotate(45deg);
+}
+
+.realtimeCostTooltip[data-placement='left']::before {
+  right: -8px;
+  border-width: 1px 1px 0 0;
+}
+
+.realtimeCostTooltip[data-placement='right']::before {
+  left: -8px;
+  border-width: 0 0 1px 1px;
+}
+
+.realtimeCostTooltipTitle {
+  display: block;
+  margin-bottom: 12px;
+  color: #cbd5e1;
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.2;
+}
+
+.realtimeCostTooltipRows {
+  display: grid;
+  gap: 9px;
+  max-height: min(340px, calc(100vh - 90px));
+  overflow: auto;
+  padding-right: 2px;
+}
+
+.realtimeCostTooltipRows > div:not(.realtimeCostTooltipDivider) {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) max-content;
+  align-items: baseline;
+  gap: 14px;
+}
+
+.realtimeCostTooltipRows span {
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.35;
+}
+
+.realtimeCostTooltipRows strong {
+  color: #f8fafc;
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0;
+  line-height: 1.35;
   text-align: right;
+  white-space: nowrap;
+}
+
+.realtimeCostTooltipRows .realtimeCostRateInput {
+  color: #38bdf8;
+}
+
+.realtimeCostTooltipRows .realtimeCostRateOutput {
+  color: #c4b5fd;
+}
+
+.realtimeCostTooltipDivider {
+  height: 1px;
+  margin: 2px 0;
+  background: #1e293b;
+}
+
+.realtimeCostTooltipEmpty {
+  margin: 0;
+  color: #94a3b8;
+  font-size: 12px;
+  line-height: 1.55;
 }
 
 .realtimeDraggableHeader {
@@ -3288,6 +4387,11 @@
 
 .realtimeDraggableHeader:active {
   cursor: grabbing;
+}
+
+.realtimeFixedHeader,
+.realtimeFixedHeader:active {
+  cursor: default;
 }
 
 .realtimeDraggableHeaderActive {
@@ -3333,14 +4437,32 @@
   white-space: nowrap;
 }
 
-.realtimeUsageTableCell {
+.realtimeReasoningCol {
+  min-width: 96px;
+}
+
+.realtimeStreamCol {
+  min-width: 92px;
+}
+
+.realtimeReasoningBadge {
+  display: inline-flex;
+  max-width: 100%;
+}
+
+.realtimeTokensTableCell {
+  white-space: normal;
+}
+
+.realtimeCacheReadTableCell {
+  text-align: left;
   white-space: normal;
 }
 
 .realtimeStatusErrorButton {
   display: inline-flex;
   align-items: center;
-  justify-content: center;
+  justify-content: flex-start;
   width: 100%;
   min-width: 0;
   padding: 0;
@@ -3485,35 +4607,67 @@
   line-height: 1.35;
 }
 
-.realtimeUsageCell {
-  gap: 2px;
-}
-
-.realtimeUsageBreakdown {
-  display: grid;
-  grid-template-columns: repeat(2, max-content);
-  gap: 2px 10px;
-  overflow: visible;
-  text-overflow: clip;
-  white-space: normal;
-}
-
-.realtimeUsageBreakdown span {
-  display: inline-flex;
-  align-items: baseline;
-  flex: 0 0 auto;
+.realtimeTokenCell {
+  width: 100%;
+  min-height: 54px;
+  align-content: center;
   gap: 3px;
+}
+
+.realtimeTokenCell > span,
+.realtimeTokenCell > small {
+  display: block;
   overflow: visible;
   text-overflow: clip;
-  font-size: inherit;
-  font-weight: inherit;
-  line-height: inherit;
   white-space: nowrap;
 }
 
-.realtimeUsageBreakdown b {
-  color: var(--monitor-ink);
+.realtimeTokenCell > span {
+  color: var(--monitor-muted);
+  font-size: 12px;
   font-weight: 700;
+}
+
+.realtimeTokenCell > span strong {
+  color: var(--monitor-ink);
+  font-size: 15px;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.realtimeTokenCell > small {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.realtimeCacheReadCell {
+  display: grid;
+  align-content: center;
+  justify-items: start;
+  width: 100%;
+  min-height: 54px;
+  gap: 2px;
+  font-variant-numeric: tabular-nums;
+}
+
+.realtimeCacheReadCell strong {
+  color: var(--monitor-ink);
+  font-size: 15px;
+  font-weight: 800;
+  line-height: 1.3;
+}
+
+.realtimeCacheReadCell small {
+  color: var(--monitor-muted);
+  font-size: 11px;
+  font-weight: 650;
+  line-height: 1.35;
+  white-space: nowrap;
+}
+
+.realtimeCacheReadCell .realtimeCacheHitLow {
+  color: var(--monitor-red);
 }
 
 .primaryCell small,
@@ -3546,7 +4700,22 @@
   min-height: 24px;
   padding: 0 8px;
   font-size: 12px;
+  justify-content: center;
+  text-align: center;
   width: 100%;
+}
+
+.realtimeTable .realtimeReasoningBadge .statusBadge {
+  width: auto;
+  min-width: 56px;
+  max-width: 100%;
+  padding-inline: 10px;
+}
+
+.realtimeTable .realtimeNonStreamingBadge .statusBadge {
+  color: var(--monitor-cyan);
+  border-color: color-mix(in srgb, var(--monitor-cyan) 26%, var(--monitor-line));
+  background: color-mix(in srgb, var(--monitor-cyan) 10%, var(--monitor-surface));
 }
 
 .realtimeTable .statusBadge::before {
@@ -3991,21 +5160,19 @@
   line-height: 1.45;
 }
 
-.realtimeUsageCell > span,
-.realtimeUsageCell > small {
+.realtimeTokenCell > span,
+.realtimeTokenCell > small {
   display: block;
   white-space: nowrap;
   overflow-wrap: normal;
   word-break: normal;
 }
 
-.realtimeTable .realtimeUsageCell > .realtimeUsageBreakdown {
-  display: grid;
-  grid-template-columns: repeat(2, max-content);
-  gap: 2px 10px;
+.realtimeTable .realtimeTokenCell > small {
+  display: block;
   overflow: visible;
   text-overflow: clip;
-  white-space: normal;
+  white-space: nowrap;
   -webkit-box-orient: initial;
   -webkit-line-clamp: unset;
 }
@@ -4050,6 +5217,17 @@
 
   to {
     transform: rotate(360deg);
+  }
+}
+
+@keyframes monitor-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+
+  50% {
+    opacity: 0.45;
   }
 }
 
@@ -4130,8 +5308,7 @@
     grid-template-columns: minmax(0, 1fr) minmax(210px, 240px);
   }
 
-  .settingsGrid,
-  .priceGrid {
+  .settingsGrid {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 
@@ -4160,12 +5337,6 @@
     background: var(--monitor-surface-elevated);
   }
 
-  .priceFieldModel,
-  .priceFieldPrompt,
-  .priceFieldCompletion,
-  .priceFieldCache {
-    grid-column: auto;
-  }
 }
 
 @container monitoring-page (max-width: 680px) {
@@ -4612,9 +5783,17 @@
     white-space: nowrap;
   }
 
-  .settingsGrid,
-  .priceGrid {
+  .settingsGrid {
     grid-template-columns: 1fr;
+  }
+
+  .settingsDangerAction {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .settingsDangerAction :global(.btn) {
+    width: 100%;
   }
 
   .segmentButton {
@@ -4670,5 +5849,225 @@
 
   .realtimeTable {
     min-width: 1360px;
+  }
+}
+
+@media (max-width: 900px) {
+  .priceManagerModal :global(.modal-body) {
+    max-height: min(76vh, 680px);
+  }
+
+  .priceRuleWorkspace {
+    grid-template-columns: 1fr;
+    grid-template-rows: 154px minmax(0, 1fr);
+    height: min(70vh, 620px);
+  }
+
+  .priceRuleSidebar {
+    grid-template-rows: auto minmax(0, 1fr);
+    border-right: 0;
+    border-bottom: 1px solid var(--monitor-line);
+  }
+
+  .priceRuleSearch {
+    padding: 10px 14px;
+  }
+
+  .priceRuleList {
+    display: flex;
+    gap: 7px;
+    overflow-x: auto;
+    overflow-y: hidden;
+    padding: 7px 10px 10px;
+  }
+
+  .priceRuleListItem {
+    flex: 0 0 220px;
+    min-height: 58px;
+    padding: 8px 10px;
+  }
+
+  .priceRuleListEmpty {
+    flex: 1 1 100%;
+    min-height: 58px;
+  }
+
+  .priceSyncHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .priceSyncActions {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .priceSyncSchedule {
+    align-items: stretch;
+    flex-direction: column;
+  }
+
+  .priceSyncScheduleControls {
+    width: 100%;
+    flex-wrap: wrap;
+  }
+
+  .priceSyncChangesHeader {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+
+  .priceSyncChangesToolbar {
+    width: 100%;
+    justify-content: space-between;
+  }
+
+  .priceSyncChangeFilters {
+    flex: 1 1 100%;
+    width: 100%;
+    max-width: 100%;
+    overflow-x: auto;
+  }
+
+  .priceSyncChangeRow {
+    grid-template-columns: 1fr;
+    gap: 8px;
+  }
+
+  .priceSyncRateChanges {
+    justify-content: flex-start;
+  }
+}
+
+@media (max-width: 680px) {
+  .priceManagerModal :global(.modal-body) {
+    max-height: min(72vh, calc(100dvh - 150px));
+  }
+
+  .priceManagerTabs {
+    padding-inline: 10px 46px;
+  }
+
+  .priceManagerTab {
+    min-width: 0;
+    flex: 1 1 0;
+    justify-content: center;
+    padding-inline: 8px;
+  }
+
+  .priceRuleWorkspace {
+    grid-template-rows: 150px minmax(0, 1fr);
+    height: min(66vh, calc(100dvh - 160px));
+  }
+
+  .priceRuleEditorHeader,
+  .priceRuleSection,
+  .priceRuleEditorFooter,
+  .priceSyncView {
+    padding-inline: 14px;
+  }
+
+  .priceRuleEditorHeader {
+    min-height: 66px;
+  }
+
+  .priceRuleEditorBadges > span:not(:first-child) {
+    display: none;
+  }
+
+  .priceBaseGrid {
+    grid-template-columns: 1fr;
+    gap: 10px;
+  }
+
+  .priceTierCompactRow {
+    position: relative;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    padding: 34px 10px 10px;
+  }
+
+  .priceTierCompactRow label:first-of-type {
+    grid-column: 1 / -1;
+  }
+
+  .priceTierIndex {
+    position: absolute;
+    top: 8px;
+    left: 10px;
+    width: 24px;
+    height: 20px;
+  }
+
+  .priceTierRemoveButton {
+    position: absolute;
+    top: 6px;
+    right: 8px;
+    width: 30px;
+    height: 26px;
+  }
+
+  .priceRuleEditorFooter {
+    align-items: stretch;
+    flex-direction: column-reverse;
+  }
+
+  .priceRuleEditorFooter > div {
+    width: 100%;
+  }
+
+  .priceRuleEditorFooter > div:last-child :global(.btn) {
+    flex: 1 1 0;
+  }
+
+  .priceSyncView {
+    padding-block: 18px;
+  }
+
+  .priceSyncActions :global(.btn) {
+    flex: 1 1 132px;
+  }
+
+  .priceSyncMetrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    min-height: 158px;
+  }
+
+  .priceSyncMetrics > div:nth-child(2) {
+    border-right: 0;
+  }
+
+  .priceSyncMetrics > div:nth-child(n + 3) {
+    border-top: 1px solid var(--monitor-line);
+  }
+
+  .priceSyncOverrideAll {
+    width: 100%;
+    justify-content: center;
+  }
+
+  .priceSyncChangeFilters button {
+    flex: 0 0 auto;
+  }
+
+  .priceSyncScheduleControls {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) auto;
+    align-items: end;
+  }
+
+  .priceSyncScheduleToggle {
+    grid-column: 1 / -1;
+  }
+
+  .priceSyncScheduleInterval {
+    width: 100%;
+  }
+
+  .priceSyncSchedule :global(.btn) {
+    min-height: 34px;
+  }
+
+  .priceUnmatchedList > div:not(.priceTierEmpty) {
+    align-items: flex-start;
   }
 }

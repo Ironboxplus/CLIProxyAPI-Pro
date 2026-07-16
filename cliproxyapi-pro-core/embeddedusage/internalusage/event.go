@@ -12,74 +12,86 @@ import (
 )
 
 type Event struct {
-	ID                int64  `json:"id,omitempty"`
-	RequestID         string `json:"request_id,omitempty"`
-	EventHash         string `json:"event_hash"`
-	TimestampMS       int64  `json:"timestamp_ms"`
-	Timestamp         string `json:"timestamp"`
-	Provider          string `json:"provider,omitempty"`
-	ExecutorType      string `json:"executor_type,omitempty"`
-	Model             string `json:"model"`
-	Alias             string `json:"alias,omitempty"`
-	Endpoint          string `json:"endpoint,omitempty"`
-	Method            string `json:"method,omitempty"`
-	Path              string `json:"path,omitempty"`
-	AuthType          string `json:"auth_type,omitempty"`
-	AuthIndex         string `json:"auth_index,omitempty"`
-	Source            string `json:"source,omitempty"`
-	SourceHash        string `json:"source_hash,omitempty"`
-	APIKeyHash        string `json:"api_key_hash,omitempty"`
-	InputTokens       int64  `json:"input_tokens"`
-	OutputTokens      int64  `json:"output_tokens"`
-	ReasoningTokens   int64  `json:"reasoning_tokens"`
-	CachedTokens      int64  `json:"cached_tokens"`
-	CacheTokens       int64  `json:"cache_tokens"`
-	TotalTokens       int64  `json:"total_tokens"`
-	LatencyMS         *int64 `json:"latency_ms,omitempty"`
-	TTFTMS            *int64 `json:"ttft_ms,omitempty"`
-	StatusCode        *int   `json:"status_code,omitempty"`
-	ErrorCode         string `json:"error_code,omitempty"`
-	ErrorMessage      string `json:"error_message,omitempty"`
-	UpstreamRequestID string `json:"upstream_request_id,omitempty"`
-	RetryAfter        string `json:"retry_after,omitempty"`
-	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
-	ServiceTier       string `json:"service_tier,omitempty"`
-	Failed            bool   `json:"failed"`
-	RawJSON           string `json:"raw_json,omitempty"`
-	CreatedAtMS       int64  `json:"created_at_ms"`
+	ID                int64    `json:"id,omitempty"`
+	RequestID         string   `json:"request_id,omitempty"`
+	EventHash         string   `json:"event_hash"`
+	TimestampMS       int64    `json:"timestamp_ms"`
+	Timestamp         string   `json:"timestamp"`
+	Provider          string   `json:"provider,omitempty"`
+	ExecutorType      string   `json:"executor_type,omitempty"`
+	Model             string   `json:"model"`
+	Alias             string   `json:"alias,omitempty"`
+	Endpoint          string   `json:"endpoint,omitempty"`
+	Method            string   `json:"method,omitempty"`
+	Path              string   `json:"path,omitempty"`
+	AuthType          string   `json:"auth_type,omitempty"`
+	AuthIndex         string   `json:"auth_index,omitempty"`
+	Source            string   `json:"source,omitempty"`
+	SourceHash        string   `json:"source_hash,omitempty"`
+	APIKeyHash        string   `json:"api_key_hash,omitempty"`
+	InputTokens       int64    `json:"input_tokens"`
+	OutputTokens      int64    `json:"output_tokens"`
+	ReasoningTokens   int64    `json:"reasoning_tokens"`
+	CachedTokens      int64    `json:"cached_tokens"`
+	CacheTokens       int64    `json:"cache_tokens"`
+	CacheReadTokens   int64    `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens  int64    `json:"cache_write_tokens,omitempty"`
+	TotalTokens       int64    `json:"total_tokens"`
+	LatencyMS         *int64   `json:"latency_ms,omitempty"`
+	TTFTMS            *int64   `json:"ttft_ms,omitempty"`
+	StatusCode        *int     `json:"status_code,omitempty"`
+	ErrorCode         string   `json:"error_code,omitempty"`
+	ErrorMessage      string   `json:"error_message,omitempty"`
+	UpstreamRequestID string   `json:"upstream_request_id,omitempty"`
+	RetryAfter        string   `json:"retry_after,omitempty"`
+	Stream            bool     `json:"stream"`
+	ReasoningEffort   string   `json:"reasoning_effort,omitempty"`
+	ServiceTier       string   `json:"service_tier,omitempty"`
+	EstimatedCost     *float64 `json:"estimated_cost,omitempty"`
+	PriceRuleID       int64    `json:"price_rule_id,omitempty"`
+	CostBreakdownJSON string   `json:"cost_breakdown_json,omitempty"`
+	Failed            bool     `json:"failed"`
+	RawJSON           string   `json:"raw_json,omitempty"`
+	CreatedAtMS       int64    `json:"created_at_ms"`
 }
 
 type Tokens struct {
-	InputTokens     int64 `json:"input_tokens"`
-	OutputTokens    int64 `json:"output_tokens"`
-	ReasoningTokens int64 `json:"reasoning_tokens"`
-	CachedTokens    int64 `json:"cached_tokens"`
-	CacheTokens     int64 `json:"cache_tokens"`
-	TotalTokens     int64 `json:"total_tokens"`
+	InputTokens      int64 `json:"input_tokens"`
+	OutputTokens     int64 `json:"output_tokens"`
+	ReasoningTokens  int64 `json:"reasoning_tokens"`
+	CachedTokens     int64 `json:"cached_tokens"`
+	CacheTokens      int64 `json:"cache_tokens"`
+	CacheReadTokens  int64 `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int64 `json:"cache_write_tokens,omitempty"`
+	TotalTokens      int64 `json:"total_tokens"`
 }
 
 type Detail struct {
-	ID                int64  `json:"id,omitempty"`
-	RequestID         string `json:"request_id,omitempty"`
-	Timestamp         string `json:"timestamp"`
-	Source            string `json:"source"`
-	AuthIndex         string `json:"auth_index,omitempty"`
-	APIKeyHash        string `json:"api_key_hash,omitempty"`
-	Provider          string `json:"provider,omitempty"`
-	ExecutorType      string `json:"executor_type,omitempty"`
-	Alias             string `json:"alias,omitempty"`
-	AuthType          string `json:"auth_type,omitempty"`
-	LatencyMS         *int64 `json:"latency_ms,omitempty"`
-	TTFTMS            *int64 `json:"ttft_ms,omitempty"`
-	StatusCode        *int   `json:"status_code,omitempty"`
-	ErrorCode         string `json:"error_code,omitempty"`
-	ErrorMessage      string `json:"error_message,omitempty"`
-	UpstreamRequestID string `json:"upstream_request_id,omitempty"`
-	RetryAfter        string `json:"retry_after,omitempty"`
-	ReasoningEffort   string `json:"reasoning_effort,omitempty"`
-	ServiceTier       string `json:"service_tier,omitempty"`
-	Tokens            Tokens `json:"tokens"`
-	Failed            bool   `json:"failed"`
+	ID                int64           `json:"id,omitempty"`
+	RequestID         string          `json:"request_id,omitempty"`
+	Timestamp         string          `json:"timestamp"`
+	Source            string          `json:"source"`
+	AuthIndex         string          `json:"auth_index,omitempty"`
+	APIKeyHash        string          `json:"api_key_hash,omitempty"`
+	Provider          string          `json:"provider,omitempty"`
+	ExecutorType      string          `json:"executor_type,omitempty"`
+	Alias             string          `json:"alias,omitempty"`
+	AuthType          string          `json:"auth_type,omitempty"`
+	LatencyMS         *int64          `json:"latency_ms,omitempty"`
+	TTFTMS            *int64          `json:"ttft_ms,omitempty"`
+	StatusCode        *int            `json:"status_code,omitempty"`
+	ErrorCode         string          `json:"error_code,omitempty"`
+	ErrorMessage      string          `json:"error_message,omitempty"`
+	UpstreamRequestID string          `json:"upstream_request_id,omitempty"`
+	RetryAfter        string          `json:"retry_after,omitempty"`
+	Stream            bool            `json:"stream"`
+	ReasoningEffort   string          `json:"reasoning_effort,omitempty"`
+	ServiceTier       string          `json:"service_tier,omitempty"`
+	EstimatedCost     *float64        `json:"estimated_cost,omitempty"`
+	PriceRuleID       int64           `json:"price_rule_id,omitempty"`
+	CostBreakdown     json.RawMessage `json:"cost_breakdown,omitempty"`
+	Tokens            Tokens          `json:"tokens"`
+	Failed            bool            `json:"failed"`
 }
 
 type ModelAggregate struct {
@@ -96,6 +108,8 @@ type Payload struct {
 	FailureCount   int64                    `json:"failure_count"`
 	TotalTokens    int64                    `json:"total_tokens"`
 	LatestID       int64                    `json:"latest_id"`
+	Generation     int64                    `json:"generation"`
+	ResetAtMS      int64                    `json:"reset_at_ms,omitempty"`
 	DetailsCount   int64                    `json:"details_count,omitempty"`
 	DetailsLimit   int64                    `json:"details_limit,omitempty"`
 	DetailsLimited bool                     `json:"details_limited,omitempty"`
@@ -148,7 +162,7 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		endpoint = "-"
 	}
 
-	inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheTokens, totalTokens := readTokenFields(record, exported)
+	inputTokens, outputTokens, reasoningTokens, cachedTokens, cacheTokens, cacheReadTokens, cacheWriteTokens, totalTokens := readTokenFields(record, exported)
 	if totalTokens <= 0 {
 		totalTokens = inputTokens + outputTokens + reasoningTokens + maxInt64(cachedTokens, cacheTokens)
 	}
@@ -213,6 +227,8 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		ReasoningTokens:   reasoningTokens,
 		CachedTokens:      cachedTokens,
 		CacheTokens:       cacheTokens,
+		CacheReadTokens:   cacheReadTokens,
+		CacheWriteTokens:  cacheWriteTokens,
 		TotalTokens:       totalTokens,
 		LatencyMS:         latencyMS,
 		TTFTMS:            ttftMS,
@@ -221,11 +237,19 @@ func NormalizeRaw(raw []byte) (Event, error) {
 		ErrorMessage:      errorMessage,
 		UpstreamRequestID: upstreamRequestID,
 		RetryAfter:        retryAfter,
+		Stream:            readBool(record, "stream"),
 		ReasoningEffort:   readString(record, "reasoning_effort"),
 		ServiceTier:       readString(record, "service_tier"),
 		Failed:            failed,
 		RawJSON:           rawJSON,
 		CreatedAtMS:       time.Now().UnixMilli(),
+	}
+	if exported {
+		if value, ok := readOptionalFloat(record, "estimated_cost"); ok {
+			event.EstimatedCost = &value
+		}
+		event.PriceRuleID = readInt(record, "price_rule_id")
+		event.CostBreakdownJSON = readString(record, "cost_breakdown_json")
 	}
 	if event.Model == "" {
 		event.Model = "-"
@@ -269,6 +293,10 @@ func BuildPayload(events []Event) Payload {
 			modelEntry = &ModelAggregate{}
 			apiEntry.Models[model] = modelEntry
 		}
+		var costBreakdown json.RawMessage
+		if json.Valid([]byte(event.CostBreakdownJSON)) {
+			costBreakdown = json.RawMessage(event.CostBreakdownJSON)
+		}
 		modelEntry.Details = append(modelEntry.Details, Detail{
 			ID:                event.ID,
 			RequestID:         event.RequestID,
@@ -287,20 +315,45 @@ func BuildPayload(events []Event) Payload {
 			ErrorMessage:      event.ErrorMessage,
 			UpstreamRequestID: event.UpstreamRequestID,
 			RetryAfter:        event.RetryAfter,
+			Stream:            event.Stream,
 			ReasoningEffort:   event.ReasoningEffort,
 			ServiceTier:       event.ServiceTier,
+			EstimatedCost:     event.EstimatedCost,
+			PriceRuleID:       event.PriceRuleID,
+			CostBreakdown:     costBreakdown,
 			Failed:            event.Failed,
 			Tokens: Tokens{
-				InputTokens:     event.InputTokens,
-				OutputTokens:    event.OutputTokens,
-				ReasoningTokens: event.ReasoningTokens,
-				CachedTokens:    event.CachedTokens,
-				CacheTokens:     event.CacheTokens,
-				TotalTokens:     event.TotalTokens,
+				InputTokens:      event.InputTokens,
+				OutputTokens:     event.OutputTokens,
+				ReasoningTokens:  event.ReasoningTokens,
+				CachedTokens:     event.CachedTokens,
+				CacheTokens:      event.CacheTokens,
+				CacheReadTokens:  event.CacheReadTokens,
+				CacheWriteTokens: event.CacheWriteTokens,
+				TotalTokens:      event.TotalTokens,
 			},
 		})
 	}
 	return payload
+}
+
+func readOptionalFloat(record map[string]any, key string) (float64, bool) {
+	value, exists := record[key]
+	if !exists || value == nil {
+		return 0, false
+	}
+	switch typed := value.(type) {
+	case float64:
+		return typed, true
+	case json.Number:
+		parsed, err := typed.Float64()
+		return parsed, err == nil
+	case string:
+		parsed, err := strconv.ParseFloat(strings.TrimSpace(typed), 64)
+		return parsed, err == nil
+	default:
+		return 0, false
+	}
 }
 
 func readTimestamp(record map[string]any, exported bool) (int64, string) {
@@ -336,7 +389,7 @@ func readTimestamp(record map[string]any, exported bool) (int64, string) {
 	return now.UnixMilli(), now.UTC().Format(time.RFC3339Nano)
 }
 
-func readTokenFields(record map[string]any, exported bool) (int64, int64, int64, int64, int64, int64) {
+func readTokenFields(record map[string]any, exported bool) (int64, int64, int64, int64, int64, int64, int64, int64) {
 	tokens := map[string]any{}
 	if nested, ok := record["tokens"].(map[string]any); ok {
 		tokens = nested
@@ -357,15 +410,26 @@ func readTokenFields(record map[string]any, exported bool) (int64, int64, int64,
 	if cached == 0 && exported {
 		cached = readInt(record, "cached_tokens")
 	}
-	cache := readIntFrom(tokens, "cache_read_tokens") + readIntFrom(tokens, "cache_creation_tokens")
+	cacheRead := readIntFrom(tokens, "cache_read_tokens")
+	cacheWrite := readIntFrom(tokens, "cache_creation_tokens")
+	cache := cacheRead + cacheWrite
 	if cache == 0 && exported {
 		cache = readInt(record, "cache_tokens")
+	}
+	if cacheRead == 0 && exported {
+		cacheRead = readInt(record, "cache_read_tokens")
+	}
+	if cacheWrite == 0 && exported {
+		cacheWrite = readInt(record, "cache_write_tokens")
+	}
+	if cacheRead == 0 && cacheWrite == 0 {
+		cacheRead = maxInt64(cached, cache)
 	}
 	total := readIntFrom(tokens, "total_tokens")
 	if total == 0 && exported {
 		total = readInt(record, "total_tokens")
 	}
-	return input, output, reasoning, cached, cache, total
+	return input, output, reasoning, cached, cache, cacheRead, cacheWrite, total
 }
 
 func readFailed(record map[string]any) bool {
@@ -380,6 +444,24 @@ func readFailed(record map[string]any) bool {
 		return readInt(fail, "status_code") >= 400
 	}
 	return record["error_message"] != nil
+}
+
+func readBool(record map[string]any, keys ...string) bool {
+	raw := first(record, keys...)
+	switch value := raw.(type) {
+	case bool:
+		return value
+	case string:
+		parsed, _ := strconv.ParseBool(strings.TrimSpace(value))
+		return parsed
+	case json.Number:
+		parsed, _ := strconv.ParseBool(value.String())
+		return parsed
+	case float64:
+		return value != 0
+	default:
+		return false
+	}
 }
 
 func readOptionalInt32(record map[string]any, keys ...string) *int {
