@@ -295,6 +295,11 @@ jobs:
           git -C upstream-core show FETCH_HEAD:models.json > upstream-core/internal/registry/models/models.json
           python customizations-repo/cliproxyapi-pro-core/patches/apply_upstream_patches.py
           cp -R customizations-repo/cliproxyapi-pro-core/plugins/cpa-sensitive upstream-core/.pro-cpa-sensitive
+          (
+            cd upstream-core/.pro-cpa-sensitive
+            go mod edit -replace=github.com/router-for-me/CLIProxyAPI/v7=..
+            go mod tidy
+          )
           cp customizations-repo/README.md upstream-core/README.md
           cp customizations-repo/README_EN.md upstream-core/README_EN.md
           cd upstream-core

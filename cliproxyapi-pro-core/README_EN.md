@@ -2,6 +2,8 @@
 
 Customized Docker build layer based on `Ironboxplus/CLIProxyAPI`. The default source is pinned to `v7.2.80-ironbox.1`, which includes the Claude versioned-thinking-signature fix.
 
+During builds, the bundled `cpa-sensitive` plugin replaces its CPA SDK dependency with the same patched core source tree, preventing the plugin and host from compiling against different interface definitions.
+
 This directory does not maintain a full fork of upstream. During Docker build it downloads an upstream release, copies in the local `embeddedusage/` package, applies the patch script in `patches/`, and builds a multi-arch image for the Pro deployment.
 
 ## What this customization adds

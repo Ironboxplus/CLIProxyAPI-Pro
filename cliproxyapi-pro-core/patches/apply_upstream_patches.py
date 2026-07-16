@@ -1490,12 +1490,26 @@ func TestParseAuthRestoresDisabledFromPluginMetadata(t *testing.T) {{
 ''')
 
 server = ROOT / 'internal/api/server.go'
+server_test = ROOT / 'internal/api/server_test.go'
 auth_files = ROOT / 'internal/api/handlers/management/auth_files.go'
 api_tools = ROOT / 'internal/api/handlers/management/api_tools.go'
 management_scheduler = ROOT / 'internal/api/handlers/management/account_inspection_scheduler.go'
 management_scheduler_test = ROOT / 'internal/api/handlers/management/account_inspection_scheduler_test.go'
 routing_policy = ROOT / 'internal/api/handlers/management/routing_policy.go'
 routing_policy_test = ROOT / 'internal/api/handlers/management/routing_policy_test.go'
+
+replace_once(
+    auth_files,
+    '''			FileName: fileName,
+			Storage:  tokenStorage,
+			Metadata: map[string]any{
+''',
+    '''			FileName:   fileName,
+			Storage:    tokenStorage,
+			Attributes: map[string]string{"plan_type": planType},
+			Metadata: map[string]any{
+''',
+)
 scheduler_source = Path('/tmp/account_inspection_scheduler.go')
 if not scheduler_source.is_file():
     scheduler_source = Path(__file__).resolve().parent / 'account_inspection_scheduler.go'
@@ -1521,6 +1535,17 @@ replace_once(
 \t\t\theaders = c.Request.Header
 \t\t}
 \t\tout := formatHomeClaudeModels(entries, util.ShouldCloakClaudeModelIDs(mode, headers))
+''',
+)
+replace_once(
+    server_test,
+    '''	if legacyRR.Code != http.StatusNotFound {
+		t.Fatalf("legacy usage status = %d, want %d body=%s", legacyRR.Code, http.StatusNotFound, legacyRR.Body.String())
+	}
+''',
+    '''	if legacyRR.Code != http.StatusServiceUnavailable {
+		t.Fatalf("Pro usage status = %d, want %d body=%s", legacyRR.Code, http.StatusServiceUnavailable, legacyRR.Body.String())
+	}
 ''',
 )
 replace_once(

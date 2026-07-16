@@ -2,6 +2,8 @@
 
 这是基于 `Ironboxplus/CLIProxyAPI` 的定制 Docker 构建层；默认固定到 `v7.2.80-ironbox.1`，其中包含 Claude 版本化 thinking 签名修复。
 
+构建时，内置 `cpa-sensitive` 插件的 CPA SDK 依赖会 replace 到同一份已应用 Pro patch 的 core 源码，避免插件和宿主分别使用不同版本的接口定义。
+
 本目录不维护 upstream 的完整 fork。Docker 构建时会下载指定 upstream release，复制本地 `embeddedusage/` 包，执行 `patches/` 中的补丁脚本，然后构建 Pro 部署使用的多架构镜像。
 
 ## 定制内容

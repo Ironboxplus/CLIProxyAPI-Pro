@@ -50,7 +50,8 @@ RUN set -eux; \
       -o /out/CLIProxyAPI ./cmd/server/; \
     mkdir -p "/out/plugins/${TARGETOS:-linux}/${TARGETARCH:-amd64}"; \
     cd /src/cpa-sensitive; \
-    go mod download; \
+    go mod edit -replace=github.com/router-for-me/CLIProxyAPI/v7=/src/CLIProxyAPI; \
+    go mod tidy; \
     CGO_ENABLED=1 GOOS=${TARGETOS:-linux} GOARCH=${TARGETARCH:-amd64} go build -buildvcs=false -buildmode=c-shared \
       -o "/out/plugins/${TARGETOS:-linux}/${TARGETARCH:-amd64}/cpa-sensitive.so" .; \
     rm -f "/out/plugins/${TARGETOS:-linux}/${TARGETARCH:-amd64}/cpa-sensitive.h"
